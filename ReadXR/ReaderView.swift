@@ -14,8 +14,8 @@ struct ReaderView: View {
     @Environment(AppState.self) private var appState
     
     // Adjustable padding to avoid lens distortion in AR glasses
-    var horizontalPadding: CGFloat = 40
-    var verticalPadding: CGFloat = 60
+    var horizontalPadding: CGFloat = 10
+    var verticalPadding: CGFloat = 20
     
     var body: some View {
         ZStack {
@@ -57,6 +57,60 @@ struct WebView: UIViewRepresentable {
     let htmlContent: String
     let baseURL: URL?
     
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject {
+        var parent: WebView
+        var webView: WKWebView?
+        
+        init(_ parent: WebView) {
+            self.parent = parent
+            super.init()
+            NotificationCenter.default.addObserver(self, selector: #selector(pageForward), name: .trackpadPageForward, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(pageBackward), name: .trackpadPageBackward, object: nil)
+        }
+        
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+        
+        @objc func pageForward() {
+            guard let scrollView = webView?.scrollView else { return }
+            
+            let offset = scrollView.contentOffset.y
+            let height = scrollView.bounds.height
+            // Use maximum of contentSize.height and bounds.height in case content is smaller than screen
+            let contentHeight = max(scrollView.contentSize.height, height)
+            
+            if offset + height >= contentHeight - 10 {
+                Task { @MainActor in
+                    EpubManager.shared.nextChapter()
+                }
+            } else {
+                let newOffset = min(offset + height - 40, contentHeight - height)
+                scrollView.setContentOffset(CGPoint(x: 0, y: newOffset), animated: true)
+            }
+        }
+        
+        @objc func pageBackward() {
+            guard let scrollView = webView?.scrollView else { return }
+            
+            let offset = scrollView.contentOffset.y
+            let height = scrollView.bounds.height
+            
+            if offset <= 10 {
+                Task { @MainActor in
+                    EpubManager.shared.previousChapter()
+                }
+            } else {
+                let newOffset = max(offset - height + 40, 0)
+                scrollView.setContentOffset(CGPoint(x: 0, y: newOffset), animated: true)
+            }
+        }
+    }
+
     func makeUIView(context: Context) -> WKWebView {
         let webView = WKWebView()
         webView.isOpaque = false
@@ -65,6 +119,7 @@ struct WebView: UIViewRepresentable {
         
         // Disable scrolling if navigation is handled via trackpad
         webView.scrollView.isScrollEnabled = false 
+        context.coordinator.webView = webView
         
         return webView
     }
@@ -72,13 +127,28 @@ struct WebView: UIViewRepresentable {
     func updateUIView(_ uiView: WKWebView, context: Context) {
         // Prepare the CSS to force OLED-friendly colors
         let css = """
+        html, body {
+            width: 100%;
+            overflow-x: hidden;
+        }
         body {
             background-color: transparent !important;
             color: #E0E0E0 !important;
             font-family: -apple-system, sans-serif;
             font-size: 1.3em;
             line-height: 1.8;
-            padding: 20px;
+            padding: 0 10px;
+            margin: 0;
+            overflow-wrap: break-word;
+            word-wrap: break-word;
+            box-sizing: border-box;
+        }
+        img, video, iframe {
+            max-width: 100% !important;
+            height: auto !important;
+            display: block;
+            margin: 0 auto;
+            object-fit: contain;
         }
         """
         
@@ -87,7 +157,7 @@ struct WebView: UIViewRepresentable {
         <!DOCTYPE html>
         <html>
         <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
             <style>\(css)</style>
         </head>
         <body>

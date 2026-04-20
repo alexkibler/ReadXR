@@ -48,14 +48,13 @@ final class AppState {
     
     /// Triggers a page forward navigation
     func pageForward() {
-        // For now, mapping page turns to chapter turns until sub-chapter paging is implemented
-        EpubManager.shared.nextChapter()
+        NotificationCenter.default.post(name: .trackpadPageForward, object: nil)
         print("Intent: Page Forward")
     }
     
     /// Triggers a page backward navigation
     func pageBackward() {
-        EpubManager.shared.previousChapter()
+        NotificationCenter.default.post(name: .trackpadPageBackward, object: nil)
         print("Intent: Page Backward")
     }
     
@@ -69,4 +68,9 @@ final class AppState {
     // MARK: - Private Initializer
     
     private init() {}
+}
+
+extension Notification.Name {
+    static let trackpadPageForward = Notification.Name("trackpadPageForward")
+    static let trackpadPageBackward = Notification.Name("trackpadPageBackward")
 }
