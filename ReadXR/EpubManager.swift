@@ -68,7 +68,18 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
         appState.bookTitle = document.title ?? "Unknown Title"
         appState.bookAuthor = document.author ?? "Unknown Author"
         appState.totalChapters = document.spine.items.count
-        appState.currentChapterIndex = 0
+        
+        let bookKey = "progress_\\(appState.bookTitle)_\\(appState.bookAuthor)"
+        if let data = UserDefaults.standard.data(forKey: bookKey),
+           let progress = try? JSONDecoder().decode(BookProgress.self, from: data) {
+            appState.currentChapterIndex = min(progress.chapterIndex, appState.totalChapters - 1)
+            appState.currentScrollPercentage = progress.scrollPercentage
+            print("Restoring progress: Chapter \\(progress.chapterIndex), \\(Int(progress.scrollPercentage * 100))%")
+        } else {
+            appState.currentChapterIndex = 0
+            appState.currentScrollPercentage = 0.0
+        }
+        
         appState.baseURL = document.contentDirectory
         appState.isBookLoaded = true
 
@@ -127,7 +138,9 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
     func nextChapter() {
         if appState.currentChapterIndex < appState.totalChapters - 1 {
             appState.currentChapterIndex += 1
+            appState.currentScrollPercentage = 0.0
             loadCurrentChapter()
+            saveProgress()
             BackgroundAudioManager.shared.updateNowPlaying()
         }
     }
@@ -136,8 +149,24 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
     func previousChapter() {
         if appState.currentChapterIndex > 0 {
             appState.currentChapterIndex -= 1
+            appState.currentScrollPercentage = 1.0
             loadCurrentChapter()
+            saveProgress()
             BackgroundAudioManager.shared.updateNowPlaying()
         }
     }
+
+    /// Saves the current reading progress to UserDefaults.
+    func saveProgress() {
+        let bookKey = "progress_\\(appState.bookTitle)_\\(appState.bookAuthor)"
+        let progress = BookProgress(chapterIndex: appState.currentChapterIndex, scrollPercentage: appState.currentScrollPercentage)
+        if let data = try? JSONEncoder().encode(progress) {
+            UserDefaults.standard.set(data, forKey: bookKey)
+        }
+    }
+}
+
+struct BookProgress: Codable {
+    let chapterIndex: Int
+    let scrollPercentage: Double
 }

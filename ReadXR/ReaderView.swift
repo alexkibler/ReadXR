@@ -74,7 +74,19 @@ struct WebView: UIViewRepresentable {
         // Call the in-page applyLayout() which uses window.innerWidth/innerHeight — these are
         // accurate at this point regardless of what context the HTML was loaded in.
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            webView.evaluateJavaScript("applyLayout();", completionHandler: nil)
+            webView.evaluateJavaScript("applyLayout();") { _, _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    let scrollView = webView.scrollView
+                    let width = scrollView.bounds.width
+                    let maxOffset = scrollView.contentSize.width - width
+                    if maxOffset > 0 {
+                        let targetOffset = maxOffset * AppState.shared.currentScrollPercentage
+                        let alignedOffset = round(targetOffset / width) * width
+                        let finalOffset = min(max(alignedOffset, 0), maxOffset)
+                        scrollView.setContentOffset(CGPoint(x: finalOffset, y: 0), animated: false)
+                    }
+                }
+            }
         }
 
         @objc func pageForward() {
@@ -85,7 +97,12 @@ struct WebView: UIViewRepresentable {
             if offset + width >= contentWidth - 5 {
                 Task { @MainActor in EpubManager.shared.nextChapter() }
             } else {
-                scrollView.setContentOffset(CGPoint(x: min(offset + width, contentWidth - width), y: 0), animated: true)
+                let targetX = min(offset + width, contentWidth - width)
+                scrollView.setContentOffset(CGPoint(x: targetX, y: 0), animated: true)
+                Task { @MainActor in
+                    AppState.shared.currentScrollPercentage = targetX / max(1.0, contentWidth - width)
+                    EpubManager.shared.saveProgress()
+                }
             }
         }
 
@@ -93,10 +110,16 @@ struct WebView: UIViewRepresentable {
             guard let scrollView = webView?.scrollView else { return }
             let offset = scrollView.contentOffset.x
             let width = scrollView.bounds.width
+            let contentWidth = max(scrollView.contentSize.width, width)
             if offset <= 5 {
                 Task { @MainActor in EpubManager.shared.previousChapter() }
             } else {
-                scrollView.setContentOffset(CGPoint(x: max(offset - width, 0), y: 0), animated: true)
+                let targetX = max(offset - width, 0)
+                scrollView.setContentOffset(CGPoint(x: targetX, y: 0), animated: true)
+                Task { @MainActor in
+                    AppState.shared.currentScrollPercentage = targetX / max(1.0, contentWidth - width)
+                    EpubManager.shared.saveProgress()
+                }
             }
         }
     }

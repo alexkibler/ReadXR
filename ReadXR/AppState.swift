@@ -32,6 +32,9 @@ final class AppState {
     /// Total chapters in the book
     var totalChapters: Int = 0
     
+    /// The current scroll percentage (0.0 to 1.0) within the chapter
+    var currentScrollPercentage: Double = 0.0
+    
     /// The HTML content of the current chapter to be rendered in ReaderView
     var currentChapterHTML: String = ""
     
