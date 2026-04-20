@@ -27,6 +27,10 @@ struct Highlight: Codable, Identifiable, Hashable {
     let pageOrProgress: String
     var chapterIndex: Int?
     var scrollPercentage: Double?
+    /// data-sid of the first sentence span in the highlight
+    var sentenceStartId: Int?
+    /// data-sid of the last sentence span in the highlight
+    var sentenceEndId: Int?
 }
 
 /// A singleton that manages the global state of the ReadXR app.
@@ -76,14 +80,53 @@ final class AppState {
     
     /// Indicates whether the user is currently actively selecting a highlight
     var isHighlightMode: Bool = false
+
+    /// Saved chapter index to return to after navigating to a highlight
+    var returnChapterIndex: Int? = nil
+
+    /// Saved scroll percentage to return to after navigating to a highlight
+    var returnScrollPercentage: Double? = nil
+
+    /// Saved sentence ID to return to after navigating to a highlight
+    var returnSentenceId: Int? = nil
+
+    /// Sentence ID to scroll to after a chapter loads (set when navigating to a highlight)
+    var pendingHighlightSentenceId: Int? = nil
     
-    // MARK: - Reading Options
-    
-    var fontSize: Double = 1.3
-    var fontColor: String = "#E0E0E0"
-    var margin: Double = 0.05
-    var topBottomMargin: Double = 0.05
-    var textJustify: String = "left"
+    // MARK: - Reading Options (Internal)
+    var fontSizeInternal: Double = 1.3
+    var fontColorInternal: String = "#E0E0E0"
+    var marginInternal: Double = 0.05
+    var topBottomMarginInternal: Double = 0.05
+    var textJustifyInternal: String = "left"
+
+    // MARK: - Reading Options (External)
+    var fontSizeExternal: Double = 1.3
+    var fontColorExternal: String = "#E0E0E0"
+    var marginExternal: Double = 0.05
+    var topBottomMarginExternal: Double = 0.05
+    var textJustifyExternal: String = "left"
+
+    var fontSize: Double {
+        get { isExternalDisplayConnected ? fontSizeExternal : fontSizeInternal }
+        set { if isExternalDisplayConnected { fontSizeExternal = newValue } else { fontSizeInternal = newValue } }
+    }
+    var fontColor: String {
+        get { isExternalDisplayConnected ? fontColorExternal : fontColorInternal }
+        set { if isExternalDisplayConnected { fontColorExternal = newValue } else { fontColorInternal = newValue } }
+    }
+    var margin: Double {
+        get { isExternalDisplayConnected ? marginExternal : marginInternal }
+        set { if isExternalDisplayConnected { marginExternal = newValue } else { marginInternal = newValue } }
+    }
+    var topBottomMargin: Double {
+        get { isExternalDisplayConnected ? topBottomMarginExternal : topBottomMarginInternal }
+        set { if isExternalDisplayConnected { topBottomMarginExternal = newValue } else { topBottomMarginInternal = newValue } }
+    }
+    var textJustify: String {
+        get { isExternalDisplayConnected ? textJustifyExternal : textJustifyInternal }
+        set { if isExternalDisplayConnected { textJustifyExternal = newValue } else { textJustifyInternal = newValue } }
+    }
     
     // MARK: - Navigation Intents
     
@@ -113,12 +156,16 @@ final class AppState {
         return highlights.filter { $0.bookId == currentKey }
     }
     
-    func saveCurrentHighlight(_ text: String) {
+    func saveCurrentHighlight(_ text: String, sentenceStartId: Int? = nil, sentenceEndId: Int? = nil) {
         let bookKey = "\(bookTitle)_\(bookAuthor)"
         let chapterName = "Chapter \(currentChapterIndex + 1)"
         let pageStr = "Page \(Int(currentScrollPercentage * 100))%"
-        
-        let newHL = Highlight(bookId: bookKey, text: text, chapterName: chapterName, pageOrProgress: pageStr, chapterIndex: currentChapterIndex, scrollPercentage: currentScrollPercentage)
+        let newHL = Highlight(
+            bookId: bookKey, text: text, chapterName: chapterName,
+            pageOrProgress: pageStr, chapterIndex: currentChapterIndex,
+            scrollPercentage: currentScrollPercentage,
+            sentenceStartId: sentenceStartId, sentenceEndId: sentenceEndId
+        )
         highlights.insert(newHL, at: 0)
         saveHighlights()
     }
@@ -183,4 +230,7 @@ extension Notification.Name {
     static let trackpadHighlightExpandDown = Notification.Name("trackpadHighlightExpandDown")
     static let trackpadHighlightExpandUp = Notification.Name("trackpadHighlightExpandUp")
     static let trackpadHighlightSave = Notification.Name("trackpadHighlightSave")
+    static let scrollToHighlight = Notification.Name("scrollToHighlight")
+    static let scrollToPercentage = Notification.Name("scrollToPercentage")
+    static let captureTopSentenceAndNavigate = Notification.Name("captureTopSentenceAndNavigate")
 }

@@ -18,9 +18,9 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         print("   - Role: \(connectingSceneSession.role.rawValue)")
         
         // Check if the session is for an external display
-        if connectingSceneSession.role == .windowExternalDisplay {
+        if connectingSceneSession.role == .windowExternalDisplayNonInteractive {
             print("   - MATCHED EXTERN DISPLAY!")
-            let config = UISceneConfiguration(name: "External Display Configuration", sessionRole: .windowExternalDisplay)
+            let config = UISceneConfiguration(name: "External Display Configuration", sessionRole: .windowExternalDisplayNonInteractive)
             // This must match a class that handles your external UI
             config.delegateClass = ExternalSceneDelegate.self
             return config
@@ -47,6 +47,9 @@ struct ReadXRApp: App {
                     // Trigger initial setup of background audio keep-alive
                     BackgroundAudioManager.shared.startBackgroundAudio()
                     BackgroundAudioManager.shared.updateNowPlaying()
+                }
+                .onOpenURL { url in
+                    EpubManager.shared.handlePickedURL(url)
                 }
         }
     }

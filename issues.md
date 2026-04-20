@@ -1,0 +1,1 @@
+media controls don't work in simulator. must test on real phone

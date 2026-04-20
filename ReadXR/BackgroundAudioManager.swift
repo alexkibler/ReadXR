@@ -37,6 +37,8 @@ final class BackgroundAudioManager: NSObject, AVAudioPlayerDelegate {
     
     /// Starts looping a silent audio file to prevent the app from being suspended.
     func startBackgroundAudio() {
+        UIApplication.shared.beginReceivingRemoteControlEvents()
+        
         guard let asset = NSDataAsset(name: "silence") else {
             // Fallback to looking for a file in the bundle if not in Assets.xcassets
             guard let url = Bundle.main.url(forResource: "silence", withExtension: "wav") else {
@@ -101,16 +103,15 @@ final class BackgroundAudioManager: NSObject, AVAudioPlayerDelegate {
         commandCenter.pauseCommand.isEnabled = false
     }
     
-    /// Updates the iOS Lock Screen / Control Center with book information.
     func updateNowPlaying() {
         var nowPlayingInfo = [String: Any]()
         
-        nowPlayingInfo[MPMediaItemPropertyTitle] = appState.bookTitle
-        nowPlayingInfo[MPMediaItemPropertyArtist] = appState.bookAuthor
-        
         // Display progress (e.g., Chapter 3 / 12)
         let progress = "Chapter \(appState.currentChapterIndex + 1) of \(max(1, appState.totalChapters))"
-        nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = progress
+        
+        nowPlayingInfo[MPMediaItemPropertyTitle] = progress
+        nowPlayingInfo[MPMediaItemPropertyArtist] = appState.bookTitle
+        nowPlayingInfo[MPMediaItemPropertyAlbumTitle] = appState.bookAuthor
         
         // If we have a cover image in the future, it would go here:
         // nowPlayingInfo[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }

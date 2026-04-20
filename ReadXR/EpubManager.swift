@@ -80,16 +80,22 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
             appState.saveRecents()
         }
         
-        let bookKey = "progress_\\(appState.bookTitle)_\\(appState.bookAuthor)"
+        let bookKey = "progress_\(appState.bookTitle)_\(appState.bookAuthor)"
         if let data = UserDefaults.standard.data(forKey: bookKey),
            let progress = try? JSONDecoder().decode(BookProgress.self, from: data) {
             appState.currentChapterIndex = min(progress.chapterIndex, appState.totalChapters - 1)
             appState.currentScrollPercentage = progress.scrollPercentage
-            if let fs = progress.fontSize { appState.fontSize = fs }
-            if let fc = progress.fontColor { appState.fontColor = fc }
-            if let m = progress.margin { appState.margin = m }
-            if let tbm = progress.topBottomMargin { appState.topBottomMargin = tbm }
-            if let tj = progress.textJustify { appState.textJustify = tj }
+            if let fs = progress.fontSize { appState.fontSizeInternal = fs }
+            if let fc = progress.fontColor { appState.fontColorInternal = fc }
+            if let m = progress.margin { appState.marginInternal = m }
+            if let tbm = progress.topBottomMargin { appState.topBottomMarginInternal = tbm }
+            if let tj = progress.textJustify { appState.textJustifyInternal = tj }
+            
+            if let fse = progress.fontSizeExternal { appState.fontSizeExternal = fse }
+            if let fce = progress.fontColorExternal { appState.fontColorExternal = fce }
+            if let me = progress.marginExternal { appState.marginExternal = me }
+            if let tbme = progress.topBottomMarginExternal { appState.topBottomMarginExternal = tbme }
+            if let tje = progress.textJustifyExternal { appState.textJustifyExternal = tje }
             print("Restoring progress: Chapter \(progress.chapterIndex), \(Int(progress.scrollPercentage * 100))%")
         } else {
             appState.currentChapterIndex = 0
@@ -189,11 +195,16 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
         let progress = BookProgress(
             chapterIndex: appState.currentChapterIndex,
             scrollPercentage: appState.currentScrollPercentage,
-            fontSize: appState.fontSize,
-            fontColor: appState.fontColor,
-            margin: appState.margin,
-            topBottomMargin: appState.topBottomMargin,
-            textJustify: appState.textJustify
+            fontSize: appState.fontSizeInternal,
+            fontColor: appState.fontColorInternal,
+            margin: appState.marginInternal,
+            topBottomMargin: appState.topBottomMarginInternal,
+            textJustify: appState.textJustifyInternal,
+            fontSizeExternal: appState.fontSizeExternal,
+            fontColorExternal: appState.fontColorExternal,
+            marginExternal: appState.marginExternal,
+            topBottomMarginExternal: appState.topBottomMarginExternal,
+            textJustifyExternal: appState.textJustifyExternal
         )
         if let data = try? JSONEncoder().encode(progress) {
             UserDefaults.standard.set(data, forKey: bookKey)
@@ -204,7 +215,7 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
     func loadRecentBook(_ book: RecentBook) {
         var isStale = false
         guard let url = try? URL(resolvingBookmarkData: book.bookmarkData, bookmarkDataIsStale: &isStale) else {
-            print("Failed to resolve bookmark for \\(book.title)")
+            print("Failed to resolve bookmark for \(book.title)")
             // Remove from recents if stale/invalid
             appState.recentBooks.removeAll { $0.id == book.id }
             appState.saveRecents()
@@ -222,4 +233,9 @@ struct BookProgress: Codable {
     var margin: Double?
     var topBottomMargin: Double?
     var textJustify: String?
+    var fontSizeExternal: Double?
+    var fontColorExternal: String?
+    var marginExternal: Double?
+    var topBottomMarginExternal: Double?
+    var textJustifyExternal: String?
 }

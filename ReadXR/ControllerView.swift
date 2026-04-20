@@ -27,11 +27,19 @@ struct ControllerView: View {
             }
         }
         .onAppear { checkExternalDisplay() }
-        .onReceive(NotificationCenter.default.publisher(for: UIScreen.didConnectNotification)) { _ in
-            checkExternalDisplay()
+        .onReceive(NotificationCenter.default.publisher(for: UIScene.willConnectNotification)) { notification in
+            if let scene = notification.object as? UIScene, scene.session.role == .windowExternalDisplayNonInteractive {
+                appState.isExternalDisplayConnected = true
+            } else {
+                checkExternalDisplay()
+            }
         }
-        .onReceive(NotificationCenter.default.publisher(for: UIScreen.didDisconnectNotification)) { _ in
-            checkExternalDisplay()
+        .onReceive(NotificationCenter.default.publisher(for: UIScene.didDisconnectNotification)) { notification in
+            if let scene = notification.object as? UIScene, scene.session.role == .windowExternalDisplayNonInteractive {
+                appState.isExternalDisplayConnected = false
+            } else {
+                checkExternalDisplay()
+            }
         }
         .fileImporter(
             isPresented: $isImporting,
@@ -150,7 +158,7 @@ struct ControllerView: View {
     /// Shown when no external display is connected and a book is loaded.
     /// A transparent overlay captures gestures so the WebView doesn't need to handle navigation.
     private var fullScreenReader: some View {
-        ZStack {
+        ZStack(alignment: .bottom) {
             ReaderView()
                 .environment(AppState.shared)
                 .ignoresSafeArea()
@@ -160,6 +168,11 @@ struct ControllerView: View {
                 .ignoresSafeArea()
                 .gesture(navigationGesture)
                 .simultaneousGesture(longPressGesture)
+                
+            navBarUI
+                .foregroundColor(.primary)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 30)
         }
     }
 
@@ -264,6 +277,46 @@ struct ControllerView: View {
         }
     }
 
+    private var navBarUI: some View {
+        HStack {
+            Button(action: { showingChapters = true }) {
+                Image(systemName: "list.bullet")
+                    .font(.title2)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(12)
+            }
+            
+            Button(action: { showingReadingOptions = true }) {
+                Image(systemName: "textformat.size")
+                    .font(.title2)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(12)
+            }
+            
+            Button(action: { showingHighlights = true }) {
+                Image(systemName: "highlighter")
+                    .font(.title2)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(12)
+            }
+            
+            Button(action: { showingSettings = true }) {
+                Image(systemName: "gearshape")
+                    .font(.title2)
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                    .background(.ultraThinMaterial)
+                    .cornerRadius(12)
+            }
+        }
+    }
+
     private var activeTrackpadUI: some View {
         VStack(spacing: 20) {
             VStack {
@@ -294,13 +347,58 @@ struct ControllerView: View {
                 Spacer()
             }
 
+            if appState.returnChapterIndex != nil {
+                Button(action: {
+                    if let chIdx = appState.returnChapterIndex {
+                        let isSameChapter = chIdx == appState.currentChapterIndex
+                        let sid = appState.returnSentenceId
+                        let scrollPct = appState.returnScrollPercentage
+                        
+                        appState.returnChapterIndex = nil
+                        appState.returnSentenceId = nil
+                        appState.returnScrollPercentage = nil
+                        
+                        appState.currentChapterIndex = chIdx
+                        if let targetSid = sid {
+                            if isSameChapter {
+                                NotificationCenter.default.post(name: .scrollToHighlight, object: nil, userInfo: ["sentenceId": targetSid])
+                            } else {
+                                appState.pendingHighlightSentenceId = targetSid
+                                EpubManager.shared.loadCurrentChapter()
+                                EpubManager.shared.saveProgress()
+                            }
+                        } else if let targetPct = scrollPct {
+                            if isSameChapter {
+                                NotificationCenter.default.post(name: .scrollToPercentage, object: nil, userInfo: ["percentage": targetPct])
+                            } else {
+                                appState.currentScrollPercentage = targetPct
+                                EpubManager.shared.loadCurrentChapter()
+                                EpubManager.shared.saveProgress()
+                            }
+                        }
+                    }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.uturn.backward")
+                        Text("Back")
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color.white.opacity(0.15))
+                    .cornerRadius(10)
+                }
+                .padding(.horizontal, 20)
+            }
+
             ZStack {
                 Color(white: 0.15)
                     .cornerRadius(20)
-                
+
                 DotPattern()
                     .clipShape(RoundedRectangle(cornerRadius: 20))
-                
+
                 Color.clear
                     .contentShape(Rectangle())
                     .gesture(navigationGesture)
@@ -311,56 +409,23 @@ struct ControllerView: View {
             }
             .padding(.horizontal, 20)
             
-            HStack {
-                Button(action: { showingChapters = true }) {
-                    Image(systemName: "list.bullet")
-                        .font(.title2)
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(Color.white.opacity(0.1))
-                        .cornerRadius(12)
-                }
-                
-                Button(action: { showingReadingOptions = true }) {
-                    Image(systemName: "textformat.size")
-                        .font(.title2)
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(Color.white.opacity(0.1))
-                        .cornerRadius(12)
-                }
-                
-                Button(action: { showingHighlights = true }) {
-                    Image(systemName: "highlighter")
-                        .font(.title2)
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(Color.white.opacity(0.1))
-                        .cornerRadius(12)
-                }
-                
-                Button(action: { showingSettings = true }) {
-                    Image(systemName: "gearshape")
-                        .font(.title2)
-                        .padding()
-                        .frame(maxWidth: .infinity)
-                        .background(Color.white.opacity(0.1))
-                        .cornerRadius(12)
-                }
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 20)
-            .padding(.bottom, 20)
+            navBarUI
+                .foregroundColor(.white)
+                .environment(\.colorScheme, .dark)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 20)
         }
     }
 
     // MARK: - Helpers
 
     private func checkExternalDisplay() {
-        let screens = UIScreen.screens
-        print("Checking Screens. Count: \(screens.count)")
-        if screens.count > 1 {
+        let hasExternalDisplay = UIApplication.shared.connectedScenes.contains { $0.session.role == .windowExternalDisplayNonInteractive }
+        print("Checking Scenes. External display active: \(hasExternalDisplay)")
+        if hasExternalDisplay {
             appState.isExternalDisplayConnected = true
+        } else {
+            appState.isExternalDisplayConnected = false
         }
     }
 }
@@ -441,11 +506,11 @@ struct ReadingOptionsView: View {
                 
                 Section(header: Text("Layout")) {
                     HStack {
-                        Text("Side Margin")
+                        Text("Horizontal Margin")
                         Slider(value: $appState.margin, in: 0.0...0.2)
                     }
                     HStack {
-                        Text("Top/Bottom Margin")
+                        Text("Vertical Margin")
                         Slider(value: $appState.topBottomMargin, in: 0.0...0.2)
                     }
                     Picker("Alignment", selection: $appState.textJustify) {
@@ -514,13 +579,8 @@ struct HighlightsView: View {
                 } else {
                     ForEach(appState.activeBookHighlights) { highlight in
                         Button(action: {
-                            if let chIdx = highlight.chapterIndex, let scrollPct = highlight.scrollPercentage {
-                                appState.currentChapterIndex = chIdx
-                                appState.currentScrollPercentage = scrollPct
-                                EpubManager.shared.loadCurrentChapter()
-                                EpubManager.shared.saveProgress()
-                                dismiss()
-                            }
+                            NotificationCenter.default.post(name: .captureTopSentenceAndNavigate, object: highlight)
+                            dismiss()
                         }) {
                             VStack(alignment: .leading, spacing: 5) {
                                 HStack {

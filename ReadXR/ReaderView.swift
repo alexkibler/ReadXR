@@ -84,6 +84,9 @@ struct WebView: UIViewRepresentable {
             NotificationCenter.default.addObserver(self, selector: #selector(expandHighlightDown), name: .trackpadHighlightExpandDown, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(expandHighlightUp), name: .trackpadHighlightExpandUp, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(saveHighlight), name: .trackpadHighlightSave, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(handleScrollToHighlight(_:)), name: .scrollToHighlight, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(handleScrollToPercentage(_:)), name: .scrollToPercentage, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(captureTopSentenceIdAndNavigate(_:)), name: .captureTopSentenceAndNavigate, object: nil)
         }
 
         deinit {
@@ -113,17 +116,88 @@ struct WebView: UIViewRepresentable {
             webView?.evaluateJavaScript("resizeHighlight(-1);")
         }
         @objc func saveHighlight() {
-            webView?.evaluateJavaScript("getHighlightText();") { [weak self] result, error in
-                if let text = result as? String, !text.isEmpty {
+            webView?.evaluateJavaScript("getHighlightData();") { [weak self] result, error in
+                guard let jsonStr = result as? String,
+                      let data = jsonStr.data(using: .utf8),
+                      let parsed = try? JSONDecoder().decode(HighlightData.self, from: data),
+                      !parsed.text.isEmpty else {
                     Task { @MainActor in
-                        AppState.shared.saveCurrentHighlight(text)
                         self?.clearHighlight()
                         AppState.shared.isHighlightMode = false
                     }
-                } else {
-                    Task { @MainActor in
-                        self?.clearHighlight()
-                        AppState.shared.isHighlightMode = false
+                    return
+                }
+                Task { @MainActor in
+                    AppState.shared.saveCurrentHighlight(parsed.text, sentenceStartId: parsed.startId, sentenceEndId: parsed.endId)
+                    // Apply persistent highlights on the live WebView without a page reload
+                    let appState = AppState.shared
+                    let locations = appState.activeBookHighlights
+                        .filter { $0.chapterIndex == appState.currentChapterIndex }
+                        .map { HighlightLocation(highlight: $0) }
+                    if let encoded = try? JSONEncoder().encode(locations),
+                       let jsStr = String(data: encoded, encoding: .utf8) {
+                        self?.webView?.evaluateJavaScript("applyPersistentHighlights(\(jsStr));")
+                    }
+                    self?.clearHighlight()
+                    AppState.shared.isHighlightMode = false
+                }
+            }
+        }
+
+        @objc func handleScrollToHighlight(_ notification: Notification) {
+            if let sid = notification.userInfo?["sentenceId"] as? Int {
+                webView?.evaluateJavaScript("scrollToHighlightId(\(sid));")
+            }
+        }
+
+        @objc func handleScrollToPercentage(_ notification: Notification) {
+            guard let scrollView = webView?.scrollView,
+                  let pct = notification.userInfo?["percentage"] as? Double else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                let width = scrollView.bounds.width
+                let maxOffset = scrollView.contentSize.width - width
+                guard maxOffset > 0 else { return }
+                let target = maxOffset * pct
+                let aligned = round(target / width) * width
+                let final = min(max(aligned, 0), maxOffset)
+                scrollView.setContentOffset(CGPoint(x: final, y: 0), animated: true)
+            }
+        }
+
+        @objc func captureTopSentenceIdAndNavigate(_ notification: Notification) {
+            guard let highlight = notification.object as? Highlight else { return }
+            webView?.evaluateJavaScript("getTopSentenceId();") { result, _ in
+                Task { @MainActor in
+                    let appState = AppState.shared
+                    
+                    if appState.returnChapterIndex == nil {
+                        appState.returnChapterIndex = appState.currentChapterIndex
+                        appState.returnScrollPercentage = appState.currentScrollPercentage
+                        if let sid = result as? Int {
+                            appState.returnSentenceId = sid
+                        }
+                    }
+                    
+                    guard let chIdx = highlight.chapterIndex else { return }
+                    let isSameChapter = chIdx == appState.currentChapterIndex
+                    appState.currentChapterIndex = chIdx
+                    
+                    if let highlightSid = highlight.sentenceStartId {
+                        if isSameChapter {
+                            NotificationCenter.default.post(name: .scrollToHighlight, object: nil, userInfo: ["sentenceId": highlightSid])
+                        } else {
+                            appState.pendingHighlightSentenceId = highlightSid
+                            EpubManager.shared.loadCurrentChapter()
+                            EpubManager.shared.saveProgress()
+                        }
+                    } else if let scrollPct = highlight.scrollPercentage {
+                        if isSameChapter {
+                            NotificationCenter.default.post(name: .scrollToPercentage, object: nil, userInfo: ["percentage": scrollPct])
+                        } else {
+                            appState.currentScrollPercentage = scrollPct
+                            EpubManager.shared.loadCurrentChapter()
+                            EpubManager.shared.saveProgress()
+                        }
                     }
                 }
             }
@@ -143,6 +217,22 @@ struct WebView: UIViewRepresentable {
                         let alignedOffset = round(targetOffset / width) * width
                         let finalOffset = min(max(alignedOffset, 0), maxOffset)
                         scrollView.setContentOffset(CGPoint(x: finalOffset, y: 0), animated: false)
+                    }
+                    // Re-apply saved highlights for this chapter
+                    let appState = AppState.shared
+                    let chIdx = appState.currentChapterIndex
+                    let locations = appState.activeBookHighlights
+                        .filter { $0.chapterIndex == chIdx }
+                        .map { HighlightLocation(highlight: $0) }
+                    if !locations.isEmpty,
+                       let data = try? JSONEncoder().encode(locations),
+                       let jsonStr = String(data: data, encoding: .utf8) {
+                        webView.evaluateJavaScript("applyPersistentHighlights(\(jsonStr));")
+                    }
+                    // Scroll to a specific highlight if requested
+                    if let sid = appState.pendingHighlightSentenceId {
+                        appState.pendingHighlightSentenceId = nil
+                        webView.evaluateJavaScript("scrollToHighlightId(\(sid));")
                     }
                 }
             }
@@ -226,6 +316,10 @@ struct WebView: UIViewRepresentable {
                 background-color: rgba(255, 235, 59, 0.4);
                 border-radius: 3px;
                 color: black !important;
+            }
+            .readxr-saved-highlight {
+                background-color: rgba(255, 210, 0, 0.22);
+                border-radius: 2px;
             }
             body {
                 margin: 0;
@@ -368,7 +462,7 @@ struct WebView: UIViewRepresentable {
                 }
             }
 
-            function getHighlightText() {
+            function getHighlightData() {
                 var start = Math.min(highlightStartIndex, highlightEndIndex);
                 var end = Math.max(highlightStartIndex, highlightEndIndex);
                 var spans = document.querySelectorAll('.readxr-sentence');
@@ -376,12 +470,65 @@ struct WebView: UIViewRepresentable {
                 for(var i=start; i<=end; i++) {
                     if(spans[i]) text += spans[i].textContent + " ";
                 }
-                return text.trim().replace(/\\s+/g, ' ');
+                var startId = spans[start] ? parseInt(spans[start].dataset.sid) : -1;
+                var endId = spans[end] ? parseInt(spans[end].dataset.sid) : -1;
+                return JSON.stringify({text: text.trim(), startId: startId, endId: endId});
+            }
+
+            function getTopSentenceId() {
+                wrapSentences();
+                var spans = document.querySelectorAll('.readxr-sentence');
+                var w = window.innerWidth;
+                for(var i=0; i<spans.length; i++) {
+                    var rect = spans[i].getBoundingClientRect();
+                    // In a multi-column layout handled via UIScrollView,
+                    // the elements on the currently visible page will have rect.left >= 0 and rect.left < viewport width.
+                    if (rect.left >= 0 && rect.left < w && rect.width > 0) {
+                        return parseInt(spans[i].dataset.sid);
+                    }
+                }
+                return null;
             }
 
             function clearHighlightMode() {
                 var els = document.querySelectorAll('.readxr-sentence.readxr-highlight');
                 for(var i=0; i<els.length; i++) els[i].classList.remove('readxr-highlight');
+            }
+
+            function applyPersistentHighlights(locations) {
+                wrapSentences();
+                var spans = Array.from(document.querySelectorAll('.readxr-sentence'));
+                spans.forEach(function(s) { s.classList.remove('readxr-saved-highlight'); });
+                locations.forEach(function(loc) {
+                    if (loc.startId >= 0) {
+                        // ID-based match (new highlights)
+                        spans.forEach(function(span) {
+                            var sid = parseInt(span.dataset.sid);
+                            if (sid >= loc.startId && sid <= loc.endId) {
+                                span.classList.add('readxr-saved-highlight');
+                            }
+                        });
+                    } else if (loc.text) {
+                        // Text-based fallback (old highlights)
+                        var target = loc.text.trim();
+                        for (var i = 0; i < spans.length; i++) {
+                            for (var j = i; j < spans.length && j < i + 30; j++) {
+                                var combined = spans.slice(i, j+1).map(function(s) { return s.textContent; }).join(' ').trim();
+                                if (combined === target) {
+                                    for (var k = i; k <= j; k++) { spans[k].classList.add('readxr-saved-highlight'); }
+                                    i = j;
+                                    break;
+                                }
+                                if (combined.length > target.length + 30) break;
+                            }
+                        }
+                    }
+                });
+            }
+
+            function scrollToHighlightId(startSid) {
+                wrapSentences();
+                ensureVisible(startSid);
             }
 
             // applyLayout() is called on DOMContentLoaded, on viewport resize (fires when the
@@ -412,6 +559,26 @@ struct WebView: UIViewRepresentable {
         <body>\(content)</body>
         </html>
         """
+    }
+}
+
+// MARK: - Highlight helpers (used by WebView.Coordinator)
+
+private struct HighlightData: Decodable {
+    let text: String
+    let startId: Int
+    let endId: Int
+}
+
+private struct HighlightLocation: Encodable {
+    let startId: Int   // -1 when unknown (old highlight)
+    let endId: Int     // -1 when unknown (old highlight)
+    let text: String?  // used as fallback when startId == -1
+
+    init(highlight: Highlight) {
+        self.startId = highlight.sentenceStartId ?? -1
+        self.endId = highlight.sentenceEndId ?? -1
+        self.text = (highlight.sentenceStartId == nil) ? highlight.text : nil
     }
 }
 
