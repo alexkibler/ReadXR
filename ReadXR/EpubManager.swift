@@ -69,6 +69,17 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
         appState.bookAuthor = document.author ?? "Unknown Author"
         appState.totalChapters = document.spine.items.count
         
+        let bookmarkData = try? url.bookmarkData()
+        if let data = bookmarkData {
+            let recent = RecentBook(id: UUID(), title: appState.bookTitle, author: appState.bookAuthor, bookmarkData: data)
+            appState.recentBooks.removeAll { $0.title == recent.title && $0.author == recent.author }
+            appState.recentBooks.insert(recent, at: 0)
+            if appState.recentBooks.count > 10 {
+                appState.recentBooks = Array(appState.recentBooks.prefix(10))
+            }
+            appState.saveRecents()
+        }
+        
         let bookKey = "progress_\\(appState.bookTitle)_\\(appState.bookAuthor)"
         if let data = UserDefaults.standard.data(forKey: bookKey),
            let progress = try? JSONDecoder().decode(BookProgress.self, from: data) {
@@ -163,6 +174,19 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
         if let data = try? JSONEncoder().encode(progress) {
             UserDefaults.standard.set(data, forKey: bookKey)
         }
+    }
+    
+    /// Loads a previously opened book.
+    func loadRecentBook(_ book: RecentBook) {
+        var isStale = false
+        guard let url = try? URL(resolvingBookmarkData: book.bookmarkData, bookmarkDataIsStale: &isStale) else {
+            print("Failed to resolve bookmark for \\(book.title)")
+            // Remove from recents if stale/invalid
+            appState.recentBooks.removeAll { $0.id == book.id }
+            appState.saveRecents()
+            return
+        }
+        handlePickedURL(url)
     }
 }
 

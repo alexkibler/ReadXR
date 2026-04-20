@@ -90,71 +90,123 @@ struct ControllerView: View {
         ZStack {
             Color.black.edgesIgnoringSafeArea(.all)
 
-            VStack(spacing: 20) {
-                if !appState.isBookLoaded {
-                    VStack(spacing: 30) {
-                        Image(systemName: "book.pages")
-                            .font(.system(size: 80))
-                            .foregroundColor(.white.opacity(0.3))
+            if !appState.isBookLoaded {
+                noBookLoadedUI
+            } else {
+                activeTrackpadUI
+            }
+        }
+    }
 
-                        Text("No Book Loaded")
-                            .font(.title2)
-                            .foregroundColor(.white)
-
-                        Button(action: { isImporting = true }) {
-                            HStack {
-                                Image(systemName: "plus.circle.fill")
-                                Text("Import ePub")
+    private var noBookLoadedUI: some View {
+        VStack(spacing: 20) {
+            HStack {
+                Text(appState.recentBooks.isEmpty ? "Welcome" : "Recent Books")
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                Button(action: { isImporting = true }) {
+                    Image(systemName: "plus")
+                        .font(.title2)
+                        .foregroundColor(.black)
+                        .padding(12)
+                        .background(Color.white)
+                        .clipShape(Circle())
+                }
+            }
+            .padding(.horizontal, 30)
+            .padding(.top, 40)
+            
+            if appState.recentBooks.isEmpty {
+                Spacer()
+                Image(systemName: "book.pages")
+                    .font(.system(size: 80))
+                    .foregroundColor(.white.opacity(0.3))
+                
+                Text("No Books Yet")
+                    .font(.title2)
+                    .foregroundColor(.white)
+                
+                Text("Import an EPUB to start reading")
+                    .foregroundColor(.gray)
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 15) {
+                        ForEach(appState.recentBooks) { book in
+                            Button(action: {
+                                EpubManager.shared.loadRecentBook(book)
+                            }) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text(book.title)
+                                            .font(.headline)
+                                            .foregroundColor(.white)
+                                            .lineLimit(2)
+                                            .multilineTextAlignment(.leading)
+                                        Text(book.author)
+                                            .font(.subheadline)
+                                            .foregroundColor(.gray)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .foregroundColor(.white.opacity(0.3))
+                                }
+                                .padding()
+                                .background(Color.white.opacity(0.1))
+                                .cornerRadius(16)
                             }
-                            .font(.headline)
-                            .padding()
-                            .frame(maxWidth: 200)
-                            .background(Color.white)
-                            .foregroundColor(.black)
-                            .cornerRadius(12)
                         }
                     }
-                    .padding()
-                } else {
-                    VStack {
-                        Text("AR Glasses Connected")
-                            .foregroundColor(.green)
-                            .font(.caption)
-                            .padding(.top, 10)
-
-                        Spacer()
-
-                        Text(appState.bookTitle)
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-
-                        Text(appState.bookAuthor)
-                            .font(.subheadline)
-                            .foregroundColor(.gray)
-
-                        Spacer()
-
-                        Text("Trackpad Active")
-                            .foregroundColor(.white.opacity(0.3))
-                            .font(.title3)
-                            .italic()
-
-                        Spacer()
-                    }
+                    .padding(.horizontal, 30)
                 }
+                .padding(.top, 10)
+            }
+        }
+    }
 
-                ZStack {
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .gesture(navigationGesture)
+    private var activeTrackpadUI: some View {
+        VStack(spacing: 20) {
+            VStack {
+                Text("AR Glasses Connected")
+                    .foregroundColor(.green)
+                    .font(.caption)
+                    .padding(.top, 10)
 
-                    RoundedRectangle(cornerRadius: 20)
-                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
-                        .padding(40)
-                        .allowsHitTesting(false)
-                }
+                Spacer()
+
+                Text(appState.bookTitle)
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+
+                Text(appState.bookAuthor)
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+
+                Spacer()
+
+                Text("Trackpad Active")
+                    .foregroundColor(.white.opacity(0.3))
+                    .font(.title3)
+                    .italic()
+
+                Spacer()
+            }
+
+            ZStack {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .gesture(navigationGesture)
+
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    .padding(40)
+                    .allowsHitTesting(false)
             }
         }
     }

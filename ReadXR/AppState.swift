@@ -7,6 +7,15 @@
 
 import SwiftUI
 import Observation
+import UniformTypeIdentifiers
+
+/// Represents a recently opened book
+struct RecentBook: Codable, Identifiable, Hashable {
+    var id: UUID = UUID()
+    let title: String
+    let author: String
+    let bookmarkData: Data
+}
 
 /// A singleton that manages the global state of the ReadXR app.
 /// This includes the loaded ePub data, current reading progress, and navigation triggers.
@@ -47,6 +56,9 @@ final class AppState {
     /// Indicates if an external display is currently connected and active
     var isExternalDisplayConnected: Bool = false
     
+    /// List of recently loaded books
+    var recentBooks: [RecentBook] = []
+    
     // MARK: - Navigation Intents
     
     /// Triggers a page forward navigation
@@ -70,7 +82,18 @@ final class AppState {
     
     // MARK: - Private Initializer
     
-    private init() {}
+    private init() {
+        if let data = UserDefaults.standard.data(forKey: "recentBooks"),
+           let recents = try? JSONDecoder().decode([RecentBook].self, from: data) {
+            self.recentBooks = recents
+        }
+    }
+    
+    func saveRecents() {
+        if let data = try? JSONEncoder().encode(recentBooks) {
+            UserDefaults.standard.set(data, forKey: "recentBooks")
+        }
+    }
 }
 
 extension Notification.Name {
