@@ -77,10 +77,56 @@ struct WebView: UIViewRepresentable {
             super.init()
             NotificationCenter.default.addObserver(self, selector: #selector(pageForward), name: .trackpadPageForward, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(pageBackward), name: .trackpadPageBackward, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(startHighlight), name: .trackpadHighlightStart, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(clearHighlight), name: .trackpadHighlightClear, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(moveHighlightFwd), name: .trackpadHighlightMoveForward, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(moveHighlightBack), name: .trackpadHighlightMoveBackward, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(expandHighlightDown), name: .trackpadHighlightExpandDown, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(expandHighlightUp), name: .trackpadHighlightExpandUp, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(saveHighlight), name: .trackpadHighlightSave, object: nil)
         }
 
         deinit {
             NotificationCenter.default.removeObserver(self)
+        }
+
+        @objc func startHighlight() {
+            webView?.evaluateJavaScript("startHighlightMode();")
+        }
+        @objc func clearHighlight() {
+            webView?.evaluateJavaScript("clearHighlightMode();")
+        }
+        @objc func moveHighlightFwd(notification: Notification) {
+            let velocity = notification.userInfo?["velocity"] as? CGFloat ?? 0
+            let amount = velocity > 150 ? 5 : 1
+            webView?.evaluateJavaScript("moveHighlight(\(amount));")
+        }
+        @objc func moveHighlightBack(notification: Notification) {
+            let velocity = notification.userInfo?["velocity"] as? CGFloat ?? 0
+            let amount = velocity > 150 ? -5 : -1
+            webView?.evaluateJavaScript("moveHighlight(\(amount));")
+        }
+        @objc func expandHighlightDown() {
+            webView?.evaluateJavaScript("resizeHighlight(1);")
+        }
+        @objc func expandHighlightUp() {
+            webView?.evaluateJavaScript("resizeHighlight(-1);")
+        }
+        @objc func saveHighlight() {
+            webView?.evaluateJavaScript("getHighlightText();") { [weak self] result, error in
+                if let text = result as? String, !text.isEmpty {
+                    Task { @MainActor in
+                        AppState.shared.saveCurrentHighlight(text)
+                        self?.clearHighlight()
+                        AppState.shared.isHighlightMode = false
+                    }
+                } else {
+                    Task { @MainActor in
+                        self?.clearHighlight()
+                        AppState.shared.isHighlightMode = false
+                    }
+                }
+            }
         }
 
         // After the page fully loads the WebView is in its final window with correct dimensions.
@@ -176,6 +222,11 @@ struct WebView: UIViewRepresentable {
             html {
                 height: 100%;
             }
+            .readxr-highlight {
+                background-color: rgba(255, 235, 59, 0.4);
+                border-radius: 3px;
+                color: black !important;
+            }
             body {
                 margin: 0;
                 padding: 0;
@@ -207,6 +258,132 @@ struct WebView: UIViewRepresentable {
             a { color: #6EA8FF; }
             </style>
             <script>
+            var sentencesWrapped = false;
+            var highlightStartIndex = 0;
+            var highlightEndIndex = 0;
+
+            function wrapSentences() {
+                if(sentencesWrapped) return;
+                var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+                var nodes = [];
+                while(walker.nextNode()) {
+                    var pName = walker.currentNode.parentNode.nodeName;
+                    if(pName !== 'SCRIPT' && pName !== 'STYLE' && walker.currentNode.textContent.trim().length > 0) {
+                        nodes.push(walker.currentNode);
+                    }
+                }
+                var sentenceId = 0;
+                nodes.forEach(function(node) {
+                    var text = node.textContent;
+                    var match;
+                    var regex = /([^.!?]+[.!?]+(?:\\s+|$)|[^.!?]+$)/g;
+                    var p = node.parentNode;
+                    var frag = document.createDocumentFragment();
+                    var matchedAny = false;
+                    while ((match = regex.exec(text)) !== null) {
+                        matchedAny = true;
+                        var str = match[0];
+                        if (str.trim().length === 0) {
+                            frag.appendChild(document.createTextNode(str));
+                            continue;
+                        }
+                        var span = document.createElement('span');
+                        span.className = 'readxr-sentence';
+                        span.dataset.sid = sentenceId++;
+                        span.textContent = str;
+                        frag.appendChild(span);
+                    }
+                    if (matchedAny) {
+                        p.replaceChild(frag, node);
+                    }
+                });
+                sentencesWrapped = true;
+            }
+
+            function startHighlightMode() {
+                wrapSentences();
+                var spans = document.querySelectorAll('.readxr-sentence');
+                var w = window.innerWidth;
+                for(var i=0; i<spans.length; i++) {
+                    var rect = spans[i].getBoundingClientRect();
+                    if (rect.left >= 0 && rect.left < w) {
+                        highlightStartIndex = i;
+                        highlightEndIndex = i;
+                        updateHighlightUI();
+                        return;
+                    }
+                }
+            }
+
+            function updateHighlightUI() {
+                var els = document.querySelectorAll('.readxr-sentence.readxr-highlight');
+                for(var i=0; i<els.length; i++) els[i].classList.remove('readxr-highlight');
+                var start = Math.min(highlightStartIndex, highlightEndIndex);
+                var end = Math.max(highlightStartIndex, highlightEndIndex);
+                var spans = document.querySelectorAll('.readxr-sentence');
+                for(var i=start; i<=end; i++) {
+                    if(spans[i]) spans[i].classList.add('readxr-highlight');
+                }
+                ensureVisible(highlightStartIndex);
+                ensureVisible(highlightEndIndex);
+            }
+
+            function moveHighlight(amount) {
+                highlightStartIndex += amount;
+                highlightEndIndex += amount;
+                var spans = document.querySelectorAll('.readxr-sentence');
+                if (highlightStartIndex < 0) { highlightStartIndex = 0; highlightEndIndex = 0; }
+                if (highlightEndIndex >= spans.length) { 
+                    highlightStartIndex = spans.length - 1; 
+                    highlightEndIndex = spans.length - 1; 
+                }
+                updateHighlightUI();
+            }
+
+            function resizeHighlight(amount) {
+                if (amount > 0) {
+                    highlightEndIndex += amount;
+                } else {
+                    if (highlightEndIndex > highlightStartIndex) {
+                        highlightEndIndex += amount;
+                    } else if (highlightEndIndex < highlightStartIndex) {
+                        highlightEndIndex += Math.abs(amount);
+                    }
+                }
+                var spans = document.querySelectorAll('.readxr-sentence');
+                if (highlightEndIndex >= spans.length) highlightEndIndex = spans.length - 1;
+                updateHighlightUI();
+            }
+
+            function ensureVisible(index) {
+                var span = document.querySelectorAll('.readxr-sentence')[index];
+                if(span) {
+                    var rect = span.getBoundingClientRect();
+                    var w = window.innerWidth;
+                    if (rect.left < 0 || rect.left >= w) {
+                        var colWidth = w;
+                        var pagesToMove = Math.floor(rect.left / colWidth);
+                        window.scrollBy({left: pagesToMove * colWidth, behavior: 'instant'});
+                    }
+                }
+            }
+
+            function getHighlightText() {
+                var start = Math.min(highlightStartIndex, highlightEndIndex);
+                var end = Math.max(highlightStartIndex, highlightEndIndex);
+                var spans = document.querySelectorAll('.readxr-sentence');
+                var text = "";
+                for(var i=start; i<=end; i++) {
+                    if(spans[i]) text += spans[i].textContent + " ";
+                }
+                return text.trim().replace(/\\s+/g, ' ');
+            }
+
+            function clearHighlightMode() {
+                var els = document.querySelectorAll('.readxr-sentence.readxr-highlight');
+                for(var i=0; i<els.length; i++) els[i].classList.remove('readxr-highlight');
+            }
+
             // applyLayout() is called on DOMContentLoaded, on viewport resize (fires when the
             // WKWebView is moved from the iPhone window to the external display window), and
             // again from Swift's webView(_:didFinish:) as a final guarantee.

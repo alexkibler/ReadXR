@@ -12,6 +12,8 @@ struct ControllerView: View {
     @State private var showingChapters = false
     @State private var showingReadingOptions = false
     @State private var showingSettings = false
+    @State private var showingHighlights = false
+    @State private var didLongPress = false
 
     private let feedback = UIImpactFeedbackGenerator(style: .light)
     private let heavyFeedback = UIImpactFeedbackGenerator(style: .heavy)
@@ -60,6 +62,11 @@ struct ControllerView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showingHighlights) {
+            HighlightsView(appState: appState)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     // MARK: - Navigation gesture (shared by both modes)
@@ -68,24 +75,72 @@ struct ControllerView: View {
         DragGesture(minimumDistance: 0)
             .onEnded { value in
                 guard appState.isBookLoaded else { return }
+                
+                if didLongPress {
+                    didLongPress = false
+                    return
+                }
+                
                 let h = value.translation.width
                 let v = value.translation.height
-                if abs(h) < 10 && abs(v) < 10 {
-                    feedback.impactOccurred()
-                    appState.pageForward()
-                    print("Trackpad: Tap (Page Forward)")
-                } else if h < -50 {
-                    feedback.impactOccurred()
-                    appState.pageForward()
-                    print("Trackpad: Swipe Left (Page Forward)")
-                } else if h > 50 {
-                    feedback.impactOccurred()
-                    appState.pageBackward()
-                    print("Trackpad: Swipe Right (Page Backward)")
-                } else if v < -50 {
-                    heavyFeedback.impactOccurred()
-                    appState.toggleMenu()
-                    print("Trackpad: Swipe Up (Menu)")
+                
+                if appState.isHighlightMode {
+                    if abs(h) < 10 && abs(v) < 10 {
+                        feedback.impactOccurred()
+                        NotificationCenter.default.post(name: .trackpadHighlightSave, object: nil)
+                    } else if abs(v) > abs(h) {
+                        if v > 30 {
+                            feedback.impactOccurred()
+                            let vel = abs(value.predictedEndTranslation.height - value.translation.height)
+                            NotificationCenter.default.post(name: .trackpadHighlightMoveForward, object: nil, userInfo: ["velocity": vel])
+                        } else if v < -30 {
+                            feedback.impactOccurred()
+                            let vel = abs(value.predictedEndTranslation.height - value.translation.height)
+                            NotificationCenter.default.post(name: .trackpadHighlightMoveBackward, object: nil, userInfo: ["velocity": vel])
+                        }
+                    } else {
+                        if h > 30 {
+                            heavyFeedback.impactOccurred()
+                            NotificationCenter.default.post(name: .trackpadHighlightExpandDown, object: nil)
+                        } else if h < -30 {
+                            heavyFeedback.impactOccurred()
+                            NotificationCenter.default.post(name: .trackpadHighlightExpandUp, object: nil)
+                        }
+                    }
+                } else {
+                    if abs(h) < 10 && abs(v) < 10 {
+                        feedback.impactOccurred()
+                        appState.pageForward()
+                        print("Trackpad: Tap (Page Forward)")
+                    } else if h < -50 {
+                        feedback.impactOccurred()
+                        appState.pageForward()
+                        print("Trackpad: Swipe Left (Page Forward)")
+                    } else if h > 50 {
+                        feedback.impactOccurred()
+                        appState.pageBackward()
+                        print("Trackpad: Swipe Right (Page Backward)")
+                    } else if v < -50 {
+                        heavyFeedback.impactOccurred()
+                        appState.toggleMenu()
+                        print("Trackpad: Swipe Up (Menu)")
+                    }
+                }
+            }
+    }
+    
+    private var longPressGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.5)
+            .onEnded { _ in
+                guard appState.isBookLoaded else { return }
+                didLongPress = true
+                heavyFeedback.impactOccurred()
+                if appState.isHighlightMode {
+                    appState.isHighlightMode = false
+                    NotificationCenter.default.post(name: .trackpadHighlightClear, object: nil)
+                } else {
+                    appState.isHighlightMode = true
+                    NotificationCenter.default.post(name: .trackpadHighlightStart, object: nil)
                 }
             }
     }
@@ -104,6 +159,7 @@ struct ControllerView: View {
                 .contentShape(Rectangle())
                 .ignoresSafeArea()
                 .gesture(navigationGesture)
+                .simultaneousGesture(longPressGesture)
         }
     }
 
@@ -248,6 +304,7 @@ struct ControllerView: View {
                 Color.clear
                     .contentShape(Rectangle())
                     .gesture(navigationGesture)
+                    .simultaneousGesture(longPressGesture)
 
                 RoundedRectangle(cornerRadius: 20)
                     .stroke(Color.white.opacity(0.2), lineWidth: 1)
@@ -266,6 +323,15 @@ struct ControllerView: View {
                 
                 Button(action: { showingReadingOptions = true }) {
                     Image(systemName: "textformat.size")
+                        .font(.title2)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(12)
+                }
+                
+                Button(action: { showingHighlights = true }) {
+                    Image(systemName: "highlighter")
                         .font(.title2)
                         .padding()
                         .frame(maxWidth: .infinity)
@@ -426,6 +492,66 @@ struct SettingsView: View {
             }
             .padding()
             .navigationTitle("Settings")
+            .navigationBarItems(trailing: Button(action: { dismiss() }) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundColor(.gray)
+                    .font(.title3)
+            })
+        }
+    }
+}
+
+struct HighlightsView: View {
+    @Bindable var appState: AppState
+    @Environment(\.dismiss) var dismiss
+    
+    var body: some View {
+        NavigationView {
+            List {
+                if appState.activeBookHighlights.isEmpty {
+                    Text("No highlights yet.")
+                        .foregroundColor(.gray)
+                } else {
+                    ForEach(appState.activeBookHighlights) { highlight in
+                        Button(action: {
+                            if let chIdx = highlight.chapterIndex, let scrollPct = highlight.scrollPercentage {
+                                appState.currentChapterIndex = chIdx
+                                appState.currentScrollPercentage = scrollPct
+                                EpubManager.shared.loadCurrentChapter()
+                                EpubManager.shared.saveProgress()
+                                dismiss()
+                            }
+                        }) {
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack {
+                                    Text(highlight.chapterName)
+                                        .font(.caption)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.gray)
+                                    Spacer()
+                                    Text(highlight.pageOrProgress)
+                                        .font(.caption)
+                                        .foregroundColor(.gray)
+                                }
+                                Text(highlight.text)
+                                    .font(.body)
+                                    .foregroundColor(.primary)
+                                    .lineLimit(3)
+                                    .truncationMode(.tail)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                    .onDelete { indexSet in
+                        let highlightsToDelete = indexSet.map { appState.activeBookHighlights[$0] }
+                        for h in highlightsToDelete {
+                            appState.highlights.removeAll { $0.id == h.id }
+                        }
+                        appState.saveHighlights()
+                    }
+                }
+            }
+            .navigationTitle("Highlights")
             .navigationBarItems(trailing: Button(action: { dismiss() }) {
                 Image(systemName: "xmark.circle.fill")
                     .foregroundColor(.gray)

@@ -18,6 +18,17 @@ struct RecentBook: Codable, Identifiable, Hashable {
     var isFinished: Bool?
 }
 
+/// Represents a highlighted section of text
+struct Highlight: Codable, Identifiable, Hashable {
+    var id: UUID = UUID()
+    let bookId: String
+    let text: String
+    let chapterName: String
+    let pageOrProgress: String
+    var chapterIndex: Int?
+    var scrollPercentage: Double?
+}
+
 /// A singleton that manages the global state of the ReadXR app.
 /// This includes the loaded ePub data, current reading progress, and navigation triggers.
 @Observable
@@ -60,6 +71,12 @@ final class AppState {
     /// List of recently loaded books
     var recentBooks: [RecentBook] = []
     
+    /// List of saved highlights
+    var highlights: [Highlight] = []
+    
+    /// Indicates whether the user is currently actively selecting a highlight
+    var isHighlightMode: Bool = false
+    
     // MARK: - Reading Options
     
     var fontSize: Double = 1.3
@@ -89,6 +106,29 @@ final class AppState {
         print("Intent: Toggle Menu")
     }
     
+    // MARK: - Highlights
+    
+    var activeBookHighlights: [Highlight] {
+        let currentKey = "\(bookTitle)_\(bookAuthor)"
+        return highlights.filter { $0.bookId == currentKey }
+    }
+    
+    func saveCurrentHighlight(_ text: String) {
+        let bookKey = "\(bookTitle)_\(bookAuthor)"
+        let chapterName = "Chapter \(currentChapterIndex + 1)"
+        let pageStr = "Page \(Int(currentScrollPercentage * 100))%"
+        
+        let newHL = Highlight(bookId: bookKey, text: text, chapterName: chapterName, pageOrProgress: pageStr, chapterIndex: currentChapterIndex, scrollPercentage: currentScrollPercentage)
+        highlights.insert(newHL, at: 0)
+        saveHighlights()
+    }
+    
+    func saveHighlights() {
+        if let data = try? JSONEncoder().encode(highlights) {
+            UserDefaults.standard.set(data, forKey: "highlights")
+        }
+    }
+    
     // MARK: - Actions
     
     /// Closes the current book and returns to the library UI
@@ -106,6 +146,10 @@ final class AppState {
         if let data = UserDefaults.standard.data(forKey: "recentBooks"),
            let recents = try? JSONDecoder().decode([RecentBook].self, from: data) {
             self.recentBooks = recents
+        }
+        if let hData = UserDefaults.standard.data(forKey: "highlights"),
+           let hRecents = try? JSONDecoder().decode([Highlight].self, from: hData) {
+            self.highlights = hRecents
         }
     }
     
@@ -132,4 +176,11 @@ final class AppState {
 extension Notification.Name {
     static let trackpadPageForward = Notification.Name("trackpadPageForward")
     static let trackpadPageBackward = Notification.Name("trackpadPageBackward")
+    static let trackpadHighlightStart = Notification.Name("trackpadHighlightStart")
+    static let trackpadHighlightClear = Notification.Name("trackpadHighlightClear")
+    static let trackpadHighlightMoveForward = Notification.Name("trackpadHighlightMoveForward")
+    static let trackpadHighlightMoveBackward = Notification.Name("trackpadHighlightMoveBackward")
+    static let trackpadHighlightExpandDown = Notification.Name("trackpadHighlightExpandDown")
+    static let trackpadHighlightExpandUp = Notification.Name("trackpadHighlightExpandUp")
+    static let trackpadHighlightSave = Notification.Name("trackpadHighlightSave")
 }
