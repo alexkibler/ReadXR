@@ -12,7 +12,7 @@
 			<array>
 				<dict>
 					<key>UISceneDelegateClassName</key>
-					<string>$(PRODUCT_MODULE_NAME).ExternalSceneDelegate</string>
+					<string>ExternalSceneDelegate</string>
 					<key>UISceneConfigurationName</key>
 					<string>External Display</string>
 				</dict>

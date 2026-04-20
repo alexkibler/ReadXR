@@ -11,6 +11,7 @@ import SwiftUI
 /// Intercepts and manages the scene for the external display (AR glasses).
 /// Role: UIWindowSceneSessionRoleExternalDisplayNonInteractive.
 @MainActor
+@objc(ExternalSceneDelegate)
 final class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
     
     var window: UIWindow?
@@ -21,13 +22,16 @@ final class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = (scene as? UIWindowScene) else { return }
         
         // Verify this is indeed an external display scene
-        print("Scene Connecting. Role: \(session.role.rawValue)")
+        print("🟢 EXTERNAL SCENE DELEGATE CALLED!")
+        print("   - Scene: \(scene)")
+        print("   - Role: \(session.role.rawValue)")
+        
         guard session.role == .windowExternalDisplayNonInteractive else { 
-            print("Ignoring connection: Incorrect role.")
+            print("   - Ignoring connection: Incorrect role.")
             return 
         }
         
-        print("Connected to External Display!")
+        print("   - Role test passed! Creating UIWindow...")
         
         // Create the window
         let window = UIWindow(windowScene: windowScene)
@@ -43,8 +47,8 @@ final class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.rootViewController = hostingController
         
         // Ensure the background of the window and root view is strictly black
-        window.backgroundColor = .black
-        hostingController.view.backgroundColor = .black
+        window.backgroundColor = .red
+        hostingController.view.backgroundColor = .red
         
         // Set and make the window visible
         self.window = window
