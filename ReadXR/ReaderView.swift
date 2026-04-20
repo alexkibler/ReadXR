@@ -79,34 +79,34 @@ struct WebView: UIViewRepresentable {
         @objc func pageForward() {
             guard let scrollView = webView?.scrollView else { return }
             
-            let offset = scrollView.contentOffset.y
-            let height = scrollView.bounds.height
-            // Use maximum of contentSize.height and bounds.height in case content is smaller than screen
-            let contentHeight = max(scrollView.contentSize.height, height)
+            let offset = scrollView.contentOffset.x
+            let width = scrollView.bounds.width
+            // Use maximum of contentSize.width and bounds.width in case content is smaller than screen
+            let contentWidth = max(scrollView.contentSize.width, width)
             
-            if offset + height >= contentHeight - 10 {
+            if offset + width >= contentWidth - 5 {
                 Task { @MainActor in
                     EpubManager.shared.nextChapter()
                 }
             } else {
-                let newOffset = min(offset + height - 40, contentHeight - height)
-                scrollView.setContentOffset(CGPoint(x: 0, y: newOffset), animated: true)
+                let newOffset = min(offset + width, contentWidth - width)
+                scrollView.setContentOffset(CGPoint(x: newOffset, y: 0), animated: true)
             }
         }
         
         @objc func pageBackward() {
             guard let scrollView = webView?.scrollView else { return }
             
-            let offset = scrollView.contentOffset.y
-            let height = scrollView.bounds.height
+            let offset = scrollView.contentOffset.x
+            let width = scrollView.bounds.width
             
-            if offset <= 10 {
+            if offset <= 5 {
                 Task { @MainActor in
                     EpubManager.shared.previousChapter()
                 }
             } else {
-                let newOffset = max(offset - height + 40, 0)
-                scrollView.setContentOffset(CGPoint(x: 0, y: newOffset), animated: true)
+                let newOffset = max(offset - width, 0)
+                scrollView.setContentOffset(CGPoint(x: newOffset, y: 0), animated: true)
             }
         }
     }
@@ -125,27 +125,31 @@ struct WebView: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        // Prepare the CSS to force OLED-friendly colors
+        // Prepare the CSS to paginate horizontally and force OLED-friendly colors
         let css = """
-        html, body {
+        html {
+            height: 100%;
             width: 100%;
-            overflow-x: hidden;
         }
         body {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            column-width: 100vw;
+            column-gap: 0;
             background-color: transparent !important;
             color: #E0E0E0 !important;
             font-family: -apple-system, sans-serif;
             font-size: 1.3em;
             line-height: 1.8;
-            padding: 0 10px;
-            margin: 0;
             overflow-wrap: break-word;
             word-wrap: break-word;
             box-sizing: border-box;
         }
         img, video, iframe {
-            max-width: 100% !important;
-            height: auto !important;
+            max-width: 100vw !important;
+            max-height: 100vh !important;
             display: block;
             margin: 0 auto;
             object-fit: contain;
