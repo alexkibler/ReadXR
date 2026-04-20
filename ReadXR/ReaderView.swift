@@ -10,11 +10,8 @@ import WebKit
 struct ReaderView: View {
     @Environment(AppState.self) private var appState
 
-    // Adjustable padding to avoid lens distortion in AR glasses
-    var horizontalPadding: CGFloat = 10
-    var verticalPadding: CGFloat = 20
-
     var body: some View {
+        GeometryReader { geo in
         ZStack {
             Color.black.ignoresSafeArea()
 
@@ -22,8 +19,8 @@ struct ReaderView: View {
                 ZStack(alignment: .bottomTrailing) {
                     WebView(htmlContent: appState.currentChapterHTML, baseURL: appState.baseURL)
                         .id(appState.currentChapterHTML.hashValue)
-                        .padding(.horizontal, horizontalPadding)
-                        .padding(.vertical, verticalPadding)
+                        .padding(.horizontal, geo.size.width * 0.05)
+                        .padding(.vertical, geo.size.height * 0.05)
 
                     Text("Ch \(appState.currentChapterIndex + 1)")
                         .font(.system(size: 10, design: .monospaced))
@@ -46,6 +43,7 @@ struct ReaderView: View {
                 }
             }
         }
+        } // GeometryReader
     }
 }
 

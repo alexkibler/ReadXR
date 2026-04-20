@@ -26,7 +26,7 @@ final class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
         print("   - Scene: \(scene)")
         print("   - Role: \(session.role.rawValue)")
         
-        guard session.role == .windowExternalDisplay else { 
+        guard session.role == .windowExternalDisplayNonInteractive else {
             print("   - Ignoring connection: Incorrect role.")
             return 
         }
