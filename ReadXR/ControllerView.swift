@@ -30,6 +30,9 @@ struct ControllerView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIScene.willConnectNotification)) { notification in
             if let scene = notification.object as? UIScene, scene.session.role == .windowExternalDisplayNonInteractive {
                 appState.isExternalDisplayConnected = true
+                // Only start background audio when AR glasses are connected
+                BackgroundAudioManager.shared.startBackgroundAudio()
+                BackgroundAudioManager.shared.updateNowPlaying()
             } else {
                 checkExternalDisplay()
             }
@@ -158,22 +161,26 @@ struct ControllerView: View {
     /// Shown when no external display is connected and a book is loaded.
     /// A transparent overlay captures gestures so the WebView doesn't need to handle navigation.
     private var fullScreenReader: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             ReaderView()
                 .environment(AppState.shared)
-                .ignoresSafeArea()
 
             Color.clear
                 .contentShape(Rectangle())
-                .ignoresSafeArea()
                 .gesture(navigationGesture)
                 .simultaneousGesture(longPressGesture)
-                
-            navBarUI
-                .foregroundColor(.primary)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 30)
+
+            // Float the nav bar at the bottom using VStack so it stays above the
+            // home indicator without adding any inset to the WebView's coordinate space.
+            VStack {
+                Spacer()
+                navBarUI
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+                    .padding(.bottom, 8)
+            }
         }
+        .ignoresSafeArea()
     }
 
     // MARK: - Trackpad UI (AR glasses mode)
@@ -278,43 +285,42 @@ struct ControllerView: View {
     }
 
     private var navBarUI: some View {
-        HStack {
-            Button(action: { showingChapters = true }) {
-                Image(systemName: "list.bullet")
-                    .font(.title2)
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(12)
-            }
-            
-            Button(action: { showingReadingOptions = true }) {
-                Image(systemName: "textformat.size")
-                    .font(.title2)
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(12)
-            }
-            
-            Button(action: { showingHighlights = true }) {
-                Image(systemName: "highlighter")
-                    .font(.title2)
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(12)
-            }
-            
-            Button(action: { showingSettings = true }) {
-                Image(systemName: "gearshape")
-                    .font(.title2)
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(12)
-            }
+        HStack(spacing: 0) {
+            navBarButton(icon: "list.bullet", label: "Chapters") { showingChapters = true }
+            navBarDivider()
+            navBarButton(icon: "textformat.size", label: "Reading") { showingReadingOptions = true }
+            navBarDivider()
+            navBarButton(icon: "highlighter", label: "Highlights") { showingHighlights = true }
+            navBarDivider()
+            navBarButton(icon: "gearshape", label: "Settings") { showingSettings = true }
         }
+        .background(.ultraThinMaterial)
+        .clipShape(Capsule())
+        .shadow(color: .black.opacity(0.18), radius: 20, x: 0, y: 8)
+        .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+    }
+
+    private func navBarButton(icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .medium))
+                Text(label)
+                    .font(.system(size: 9, weight: .medium))
+                    .opacity(0.7)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .padding(.horizontal, 8)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func navBarDivider() -> some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.08))
+            .frame(width: 1, height: 28)
     }
 
     private var activeTrackpadUI: some View {
@@ -536,26 +542,27 @@ struct ReadingOptionsView: View {
 }
 
 struct SettingsView: View {
-    let appState: AppState
+    @Bindable var appState: AppState
     @Binding var showingSettings: Bool
     @Environment(\.dismiss) var dismiss
-    
+
     var body: some View {
         NavigationView {
-            VStack(spacing: 30) {
-                Button("Return to Library") {
-                    appState.closeBook()
-                    showingSettings = false
+            Form {
+                Section(header: Text("Audio"), footer: Text("When enabled, the app takes audio focus and shows media controls on the lock screen. When disabled, background audio (e.g. music) continues uninterrupted.")) {
+                    Toggle("Lock Screen Controls", isOn: $appState.lockScreenControls)
+                        .onChange(of: appState.lockScreenControls) { _, newValue in
+                            BackgroundAudioManager.shared.applyMixingPreference(newValue)
+                        }
                 }
-                .foregroundColor(.white)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(Color.red)
-                .cornerRadius(12)
-                
-                Spacer()
+
+                Section {
+                    Button("Return to Library", role: .destructive) {
+                        appState.closeBook()
+                        showingSettings = false
+                    }
+                }
             }
-            .padding()
             .navigationTitle("Settings")
             .navigationBarItems(trailing: Button(action: { dismiss() }) {
                 Image(systemName: "xmark.circle.fill")

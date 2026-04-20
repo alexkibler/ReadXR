@@ -93,6 +93,11 @@ final class AppState {
     /// Sentence ID to scroll to after a chapter loads (set when navigating to a highlight)
     var pendingHighlightSentenceId: Int? = nil
     
+    // MARK: - Audio Settings
+    var lockScreenControls: Bool = UserDefaults.standard.object(forKey: "lockScreenControls") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(lockScreenControls, forKey: "lockScreenControls") }
+    }
+
     // MARK: - Reading Options (Internal)
     var fontSizeInternal: Double = 1.3
     var fontColorInternal: String = "#E0E0E0"

@@ -45,8 +45,6 @@ struct ReaderView: View {
                         .font(.largeTitle)
                         .fontWeight(.bold)
                         .foregroundColor(.white)
-                    Text("Waiting for book import on iPhone...")
-                        .foregroundColor(.gray)
                 }
             }
         }
@@ -71,6 +69,10 @@ struct WebView: UIViewRepresentable {
         var parent: WebView
         var webView: WKWebView?
         var lastLoadedHTML: String = ""
+        /// Tracks the intended scroll destination independently of the animated position,
+        /// so rapid page turns always compute from the correct logical page rather than
+        /// an in-flight (mid-animation) content offset.
+        var targetOffset: CGFloat = 0
 
         init(_ parent: WebView) {
             self.parent = parent
@@ -94,26 +96,26 @@ struct WebView: UIViewRepresentable {
         }
 
         @objc func startHighlight() {
-            webView?.evaluateJavaScript("startHighlightMode();")
+            webView?.evaluateJavaScript("startHighlightMode();") { _, _ in }
         }
         @objc func clearHighlight() {
-            webView?.evaluateJavaScript("clearHighlightMode();")
+            webView?.evaluateJavaScript("clearHighlightMode();") { _, _ in }
         }
         @objc func moveHighlightFwd(notification: Notification) {
             let velocity = notification.userInfo?["velocity"] as? CGFloat ?? 0
             let amount = velocity > 150 ? 5 : 1
-            webView?.evaluateJavaScript("moveHighlight(\(amount));")
+            webView?.evaluateJavaScript("moveHighlight(\(amount));") { _, _ in }
         }
         @objc func moveHighlightBack(notification: Notification) {
             let velocity = notification.userInfo?["velocity"] as? CGFloat ?? 0
             let amount = velocity > 150 ? -5 : -1
-            webView?.evaluateJavaScript("moveHighlight(\(amount));")
+            webView?.evaluateJavaScript("moveHighlight(\(amount));") { _, _ in }
         }
         @objc func expandHighlightDown() {
-            webView?.evaluateJavaScript("resizeHighlight(1);")
+            webView?.evaluateJavaScript("resizeHighlight(1);") { _, _ in }
         }
         @objc func expandHighlightUp() {
-            webView?.evaluateJavaScript("resizeHighlight(-1);")
+            webView?.evaluateJavaScript("resizeHighlight(-1);") { _, _ in }
         }
         @objc func saveHighlight() {
             webView?.evaluateJavaScript("getHighlightData();") { [weak self] result, error in
@@ -136,7 +138,7 @@ struct WebView: UIViewRepresentable {
                         .map { HighlightLocation(highlight: $0) }
                     if let encoded = try? JSONEncoder().encode(locations),
                        let jsStr = String(data: encoded, encoding: .utf8) {
-                        self?.webView?.evaluateJavaScript("applyPersistentHighlights(\(jsStr));")
+                        self?.webView?.evaluateJavaScript("applyPersistentHighlights(\(jsStr));") { _, _ in }
                     }
                     self?.clearHighlight()
                     AppState.shared.isHighlightMode = false
@@ -146,7 +148,7 @@ struct WebView: UIViewRepresentable {
 
         @objc func handleScrollToHighlight(_ notification: Notification) {
             if let sid = notification.userInfo?["sentenceId"] as? Int {
-                webView?.evaluateJavaScript("scrollToHighlightId(\(sid));")
+                webView?.evaluateJavaScript("scrollToHighlightId(\(sid));") { _, _ in }
             }
         }
 
@@ -160,7 +162,8 @@ struct WebView: UIViewRepresentable {
                 let target = maxOffset * pct
                 let aligned = round(target / width) * width
                 let final = min(max(aligned, 0), maxOffset)
-                scrollView.setContentOffset(CGPoint(x: final, y: 0), animated: true)
+                self.targetOffset = final
+                scrollView.setContentOffset(CGPoint(x: final, y: 0), animated: false)
             }
         }
 
@@ -213,10 +216,13 @@ struct WebView: UIViewRepresentable {
                     let width = scrollView.bounds.width
                     let maxOffset = scrollView.contentSize.width - width
                     if maxOffset > 0 {
-                        let targetOffset = maxOffset * AppState.shared.currentScrollPercentage
-                        let alignedOffset = round(targetOffset / width) * width
+                        let restored = maxOffset * AppState.shared.currentScrollPercentage
+                        let alignedOffset = round(restored / width) * width
                         let finalOffset = min(max(alignedOffset, 0), maxOffset)
+                        self.targetOffset = finalOffset
                         scrollView.setContentOffset(CGPoint(x: finalOffset, y: 0), animated: false)
+                    } else {
+                        self.targetOffset = 0
                     }
                     // Re-apply saved highlights for this chapter
                     let appState = AppState.shared
@@ -227,12 +233,12 @@ struct WebView: UIViewRepresentable {
                     if !locations.isEmpty,
                        let data = try? JSONEncoder().encode(locations),
                        let jsonStr = String(data: data, encoding: .utf8) {
-                        webView.evaluateJavaScript("applyPersistentHighlights(\(jsonStr));")
+                        webView.evaluateJavaScript("applyPersistentHighlights(\(jsonStr));") { _, _ in }
                     }
                     // Scroll to a specific highlight if requested
                     if let sid = appState.pendingHighlightSentenceId {
                         appState.pendingHighlightSentenceId = nil
-                        webView.evaluateJavaScript("scrollToHighlightId(\(sid));")
+                        webView.evaluateJavaScript("scrollToHighlightId(\(sid));") { _, _ in }
                     }
                 }
             }
@@ -240,16 +246,20 @@ struct WebView: UIViewRepresentable {
 
         @objc func pageForward() {
             guard let scrollView = webView?.scrollView else { return }
-            let offset = scrollView.contentOffset.x
             let width = scrollView.bounds.width
             let contentWidth = max(scrollView.contentSize.width, width)
-            if offset + width >= contentWidth - 5 {
+            if targetOffset + width >= contentWidth - 5 {
                 Task { @MainActor in EpubManager.shared.nextChapter() }
             } else {
-                let targetX = min(offset + width, contentWidth - width)
-                scrollView.setContentOffset(CGPoint(x: targetX, y: 0), animated: true)
+                targetOffset = min(targetOffset + width, contentWidth - width)
+                let dest = CGPoint(x: targetOffset, y: 0)
+                UIView.animate(withDuration: 0.3, delay: 0,
+                               options: [.curveEaseOut, .beginFromCurrentState]) {
+                    scrollView.contentOffset = dest
+                }
+                let pct = targetOffset / max(1.0, contentWidth - width)
                 Task { @MainActor in
-                    AppState.shared.currentScrollPercentage = targetX / max(1.0, contentWidth - width)
+                    AppState.shared.currentScrollPercentage = pct
                     EpubManager.shared.saveProgress()
                 }
             }
@@ -257,16 +267,20 @@ struct WebView: UIViewRepresentable {
 
         @objc func pageBackward() {
             guard let scrollView = webView?.scrollView else { return }
-            let offset = scrollView.contentOffset.x
             let width = scrollView.bounds.width
             let contentWidth = max(scrollView.contentSize.width, width)
-            if offset <= 5 {
+            if targetOffset <= 5 {
                 Task { @MainActor in EpubManager.shared.previousChapter() }
             } else {
-                let targetX = max(offset - width, 0)
-                scrollView.setContentOffset(CGPoint(x: targetX, y: 0), animated: true)
+                targetOffset = max(targetOffset - width, 0)
+                let dest = CGPoint(x: targetOffset, y: 0)
+                UIView.animate(withDuration: 0.3, delay: 0,
+                               options: [.curveEaseOut, .beginFromCurrentState]) {
+                    scrollView.contentOffset = dest
+                }
+                let pct = targetOffset / max(1.0, contentWidth - width)
                 Task { @MainActor in
-                    AppState.shared.currentScrollPercentage = targetX / max(1.0, contentWidth - width)
+                    AppState.shared.currentScrollPercentage = pct
                     EpubManager.shared.saveProgress()
                 }
             }
@@ -289,8 +303,29 @@ struct WebView: UIViewRepresentable {
             uiView.loadHTMLString(buildHTML(htmlContent), baseURL: baseURL)
             context.coordinator.lastLoadedHTML = htmlContent
         } else {
+            // Snapshot current position BEFORE the reflow so we can restore it after.
+            // Changing margin/font changes column count, which moves content at a fixed
+            // absolute offset — saving and restoring the percentage keeps the user on the
+            // same logical page through style adjustments.
+            let sv = uiView.scrollView
+            let preWidth = sv.bounds.width
+            let preMax = sv.contentSize.width - preWidth
+            let prePct = preMax > 1 ? (sv.contentOffset.x / preMax) : 0.0
+
             let js = "updateStyles(\(fontSize), '\(fontColor)', '\(justify)', \(margin), \(topBottomMargin));"
-            uiView.evaluateJavaScript(js)
+            uiView.evaluateJavaScript(js) { [weak uiView] _, _ in
+                guard let uiView else { return }
+                // Give the browser one frame to finish the reflow before restoring position.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    let sv = uiView.scrollView
+                    let w = sv.bounds.width
+                    let maxOff = sv.contentSize.width - w
+                    guard maxOff > 0, w > 0 else { return }
+                    let target = maxOff * prePct
+                    let aligned = round(target / w) * w
+                    sv.setContentOffset(CGPoint(x: min(max(aligned, 0), maxOff), y: 0), animated: false)
+                }
+            }
         }
     }
 
@@ -538,7 +573,11 @@ struct WebView: UIViewRepresentable {
                 var w = window.innerWidth;
                 var h = window.innerHeight;
                 if (w > 0 && h > 0) {
-                    document.body.style.columnWidth = w + 'px';
+                    var style = window.getComputedStyle(document.body);
+                    var pl = parseFloat(style.paddingLeft) || 0;
+                    var pr = parseFloat(style.paddingRight) || 0;
+                    var contentWidth = w - pl - pr;
+                    document.body.style.columnWidth = (contentWidth > 0 ? contentWidth : w) + 'px';
                     document.body.style.height = h + 'px';
                 }
             }

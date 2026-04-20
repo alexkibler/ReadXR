@@ -43,11 +43,6 @@ struct ReadXRApp: App {
         WindowGroup {
             ControllerView()
                 .environment(appState)
-                .onAppear {
-                    // Trigger initial setup of background audio keep-alive
-                    BackgroundAudioManager.shared.startBackgroundAudio()
-                    BackgroundAudioManager.shared.updateNowPlaying()
-                }
                 .onOpenURL { url in
                     EpubManager.shared.handlePickedURL(url)
                 }
