@@ -26,7 +26,7 @@ final class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
         print("   - Scene: \(scene)")
         print("   - Role: \(session.role.rawValue)")
         
-        guard session.role == .windowExternalDisplayNonInteractive else { 
+        guard session.role == .windowExternalDisplay else { 
             print("   - Ignoring connection: Incorrect role.")
             return 
         }
@@ -47,8 +47,8 @@ final class ExternalSceneDelegate: UIResponder, UIWindowSceneDelegate {
         window.rootViewController = hostingController
         
         // Ensure the background of the window and root view is strictly black
-        window.backgroundColor = .red
-        hostingController.view.backgroundColor = .red
+        window.backgroundColor = .black
+        hostingController.view.backgroundColor = .black
         
         // Set and make the window visible
         self.window = window

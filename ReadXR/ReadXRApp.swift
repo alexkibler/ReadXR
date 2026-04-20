@@ -17,9 +17,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         print("🔴 APP DELEGATE CONFIGURING SCENE:")
         print("   - Role: \(connectingSceneSession.role.rawValue)")
         
-        if connectingSceneSession.role == .windowExternalDisplayNonInteractive {
-            print("   - MATCHED EXTERN DISPLAY NON-INTERACTIVE!")
-            let config = UISceneConfiguration(name: "External Display", sessionRole: connectingSceneSession.role)
+        // Check if the session is for an external display
+        if connectingSceneSession.role == .windowExternalDisplay {
+            print("   - MATCHED EXTERN DISPLAY!")
+            let config = UISceneConfiguration(name: "External Display Configuration", sessionRole: .windowExternalDisplay)
+            // This must match a class that handles your external UI
             config.delegateClass = ExternalSceneDelegate.self
             return config
         }

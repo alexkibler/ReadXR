@@ -20,7 +20,7 @@ struct ReaderView: View {
     var body: some View {
         ZStack {
             // Force the underlying SwiftUI container to pure black
-            Color.blue.edgesIgnoringSafeArea(.all)
+            Color.black.edgesIgnoringSafeArea(.all)
             
             if appState.isBookLoaded {
                 ZStack(alignment: .bottomTrailing) {
@@ -34,7 +34,7 @@ struct ReaderView: View {
                         .foregroundColor(.white.opacity(0.1))
                         .padding()
                 }
-                .background(Color.blue)
+                .background(Color.black)
             } else {
                 VStack(spacing: 20) {
                     Image(systemName: "eyeglasses")
