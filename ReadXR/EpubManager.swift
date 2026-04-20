@@ -1,0 +1,143 @@
+//
+//  EpubManager.swift
+//  ReadXR
+//
+//  Created by Gemini CLI on 4/19/26.
+//
+
+import Foundation
+import SwiftUI
+import EPUBKit
+import UniformTypeIdentifiers
+
+/// Handles importing and parsing of .epub files.
+/// Requires the EPUBKit package to be added to the project.
+@MainActor
+final class EpubManager: NSObject, UIDocumentPickerDelegate {
+    static let shared = EpubManager()
+    
+    private let appState = AppState.shared
+    private var currentDocument: EPUBDocument?
+    
+    private override init() {
+        super.init()
+    }
+    
+    /// Triggers the system document picker to select an .epub file.
+    func showDocumentPicker() {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType(filenameExtension: "epub")!])
+        picker.delegate = self
+        
+        // Present the picker from the top-most view controller
+        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let rootVC = windowScene.windows.first?.rootViewController {
+            rootVC.present(picker, animated: true)
+        }
+    }
+    
+    // MARK: - UIDocumentPickerDelegate
+    
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        guard let url = urls.first else { return }
+        handlePickedURL(url)
+    }
+    
+    /// Public method to handle URLs from SwiftUI .fileImporter or UIKit picker
+    func handlePickedURL(_ url: URL) {
+        // Ensure access to the local file (required for files outside the app sandbox)
+        guard url.startAccessingSecurityScopedResource() else {
+            print("Failed to access document at: \(url)")
+            return
+        }
+        
+        defer { url.stopAccessingSecurityScopedResource() }
+        
+        loadEpub(from: url)
+    }
+    
+    /// Loads and parses the .epub file using EPUBKit.
+    private func loadEpub(from url: URL) {
+        guard let document = EPUBDocument(url: url) else {
+            print("Failed to parse EPUB at: \(url)")
+            return
+        }
+        
+        self.currentDocument = document
+
+        // Update global state
+        appState.bookTitle = document.title ?? "Unknown Title"
+        appState.bookAuthor = document.author ?? "Unknown Author"
+        appState.totalChapters = document.spine.items.count
+        appState.currentChapterIndex = 0
+        appState.baseURL = document.contentDirectory
+        appState.isBookLoaded = true
+
+        print("EPUB Loaded successfully. Content Directory: \(document.contentDirectory.path)")
+
+        // Load the first chapter
+        loadCurrentChapter()
+        // Update lock screen metadata
+        BackgroundAudioManager.shared.updateNowPlaying()
+        
+        print("Successfully loaded: \(appState.bookTitle)")
+    }
+    
+    /// Extracts the HTML content of the current chapter from the spine.
+    func loadCurrentChapter() {
+        guard let document = currentDocument,
+              appState.currentChapterIndex < document.spine.items.count else { return }
+        
+        let spineItem = document.spine.items[appState.currentChapterIndex]
+        
+        // Resolve the manifest item via the idref
+        guard let manifestItem = document.manifest.items[spineItem.idref] else {
+            appState.currentChapterHTML = "<p style='color:red;'>Spine item not found in manifest.</p>"
+            return
+        }
+        
+        // EPUBKit uses .path for the full relative path within the EPUB
+        let chapterURL = document.contentDirectory.appendingPathComponent(manifestItem.path)
+        
+        // Update baseURL to the folder containing this chapter (for local image/CSS resolution)
+        appState.baseURL = chapterURL.deletingLastPathComponent()
+        
+        if var htmlString = try? String(contentsOf: chapterURL, encoding: .utf8) {
+            // Extract only the content INSIDE the body tags
+            if let bodyStartRange = htmlString.range(of: "<body", options: .caseInsensitive),
+               let startCloseRange = htmlString[bodyStartRange.upperBound...].range(of: ">") {
+                let afterBodyTag = htmlString[startCloseRange.upperBound...]
+                if let bodyEndRange = afterBodyTag.range(of: "</body>", options: .caseInsensitive) {
+                    htmlString = String(afterBodyTag[..<bodyEndRange.lowerBound])
+                } else {
+                    htmlString = String(afterBodyTag)
+                }
+            }
+            
+            appState.currentChapterHTML = htmlString
+            print("Successfully loaded chapter index \(appState.currentChapterIndex). Cleaned Length: \(htmlString.count)")
+            print("Content Preview: \(htmlString.prefix(50))")
+        } else {
+            // If .path didn't work, try using the directory path + the manifest path
+            appState.currentChapterHTML = "<p style='color:red;'>Failed to read file at: \(manifestItem.path)</p>"
+            print("Error: Could not read HTML file at \(chapterURL.path)")
+        }
+    }
+    
+    /// Navigates to the next chapter.
+    func nextChapter() {
+        if appState.currentChapterIndex < appState.totalChapters - 1 {
+            appState.currentChapterIndex += 1
+            loadCurrentChapter()
+            BackgroundAudioManager.shared.updateNowPlaying()
+        }
+    }
+    
+    /// Navigates to the previous chapter.
+    func previousChapter() {
+        if appState.currentChapterIndex > 0 {
+            appState.currentChapterIndex -= 1
+            loadCurrentChapter()
+            BackgroundAudioManager.shared.updateNowPlaying()
+        }
+    }
+}
