@@ -17,9 +17,16 @@ struct ReaderView: View {
 
             if appState.isBookLoaded {
                 ZStack(alignment: .bottomTrailing) {
-                    WebView(htmlContent: appState.currentChapterHTML, baseURL: appState.baseURL)
-                        .id(appState.currentChapterHTML.hashValue)
-                        .padding(.horizontal, geo.size.width * 0.05)
+                    WebView(
+                        htmlContent: appState.currentChapterHTML, 
+                        baseURL: appState.baseURL,
+                        fontSize: appState.fontSize,
+                        fontColor: appState.fontColor,
+                        margin: appState.margin,
+                        topBottomMargin: appState.topBottomMargin,
+                        justify: appState.textJustify
+                    )
+                        .id("WebView") // don't reconstruct WebView on html change!
                         .padding(.vertical, geo.size.height * 0.05)
 
                     Text("Ch \(appState.currentChapterIndex + 1)")
@@ -50,6 +57,11 @@ struct ReaderView: View {
 struct WebView: UIViewRepresentable {
     let htmlContent: String
     let baseURL: URL?
+    let fontSize: Double
+    let fontColor: String
+    let margin: Double
+    let topBottomMargin: Double
+    let justify: String
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -58,6 +70,7 @@ struct WebView: UIViewRepresentable {
     class Coordinator: NSObject, WKNavigationDelegate {
         var parent: WebView
         var webView: WKWebView?
+        var lastLoadedHTML: String = ""
 
         init(_ parent: WebView) {
             self.parent = parent
@@ -136,7 +149,13 @@ struct WebView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
-        uiView.loadHTMLString(buildHTML(htmlContent), baseURL: baseURL)
+        if context.coordinator.lastLoadedHTML != htmlContent {
+            uiView.loadHTMLString(buildHTML(htmlContent), baseURL: baseURL)
+            context.coordinator.lastLoadedHTML = htmlContent
+        } else {
+            let js = "updateStyles(\(fontSize), '\(fontColor)', '\(justify)', \(margin), \(topBottomMargin));"
+            uiView.evaluateJavaScript(js)
+        }
     }
 
     private func buildHTML(_ content: String) -> String {
@@ -146,25 +165,38 @@ struct WebView: UIViewRepresentable {
         <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
+            :root {
+                --user-font-size: \(fontSize)em;
+                --user-font-color: \(fontColor);
+                --user-margin: \(Int(margin * 100))vw;
+                --user-tb-margin: \(Int(topBottomMargin * 100))vh;
+                --user-gap: \(Int(margin * 200))vw;
+                --user-justify: \(justify);
+            }
             html {
                 height: 100%;
             }
             body {
                 margin: 0;
                 padding: 0;
+                padding-top: var(--user-tb-margin) !important;
+                padding-bottom: var(--user-tb-margin) !important;
+                padding-left: var(--user-margin) !important;
+                padding-right: var(--user-margin) !important;
                 height: 100%;
                 /* overflow-y hidden stops vertical scroll; horizontal overflow is intentional —
                    CSS columns extend the document width so the scrollView can page through them. */
                 overflow-y: hidden;
                 background-color: transparent !important;
-                color: #E0E0E0 !important;
+                color: var(--user-font-color) !important;
                 font-family: -apple-system, sans-serif;
-                font-size: 1.3em;
+                font-size: var(--user-font-size) !important;
+                text-align: var(--user-justify) !important;
                 line-height: 1.8;
                 overflow-wrap: break-word;
                 word-wrap: break-word;
                 box-sizing: border-box;
-                column-gap: 0;
+                column-gap: var(--user-gap) !important;
             }
             img, video, svg {
                 max-width: 100% !important;
@@ -185,6 +217,16 @@ struct WebView: UIViewRepresentable {
                     document.body.style.columnWidth = w + 'px';
                     document.body.style.height = h + 'px';
                 }
+            }
+            function updateStyles(size, color, justify, margin, tbMargin) {
+                var root = document.documentElement;
+                root.style.setProperty('--user-font-size', size + 'em');
+                root.style.setProperty('--user-font-color', color);
+                root.style.setProperty('--user-justify', justify);
+                root.style.setProperty('--user-margin', Math.floor(margin * 100) + 'vw');
+                root.style.setProperty('--user-tb-margin', Math.floor(tbMargin * 100) + 'vh');
+                root.style.setProperty('--user-gap', Math.floor(margin * 200) + 'vw');
+                applyLayout();
             }
             document.addEventListener('DOMContentLoaded', applyLayout);
             window.addEventListener('resize', applyLayout);

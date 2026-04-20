@@ -85,7 +85,12 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
            let progress = try? JSONDecoder().decode(BookProgress.self, from: data) {
             appState.currentChapterIndex = min(progress.chapterIndex, appState.totalChapters - 1)
             appState.currentScrollPercentage = progress.scrollPercentage
-            print("Restoring progress: Chapter \\(progress.chapterIndex), \\(Int(progress.scrollPercentage * 100))%")
+            if let fs = progress.fontSize { appState.fontSize = fs }
+            if let fc = progress.fontColor { appState.fontColor = fc }
+            if let m = progress.margin { appState.margin = m }
+            if let tbm = progress.topBottomMargin { appState.topBottomMargin = tbm }
+            if let tj = progress.textJustify { appState.textJustify = tj }
+            print("Restoring progress: Chapter \(progress.chapterIndex), \(Int(progress.scrollPercentage * 100))%")
         } else {
             appState.currentChapterIndex = 0
             appState.currentScrollPercentage = 0.0
@@ -166,11 +171,30 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
             BackgroundAudioManager.shared.updateNowPlaying()
         }
     }
+    
+    /// Navigates to a specific chapter index
+    func jumpToChapter(_ index: Int) {
+        if index >= 0 && index < appState.totalChapters {
+            appState.currentChapterIndex = index
+            appState.currentScrollPercentage = 0.0
+            loadCurrentChapter()
+            saveProgress()
+            BackgroundAudioManager.shared.updateNowPlaying()
+        }
+    }
 
     /// Saves the current reading progress to UserDefaults.
     func saveProgress() {
-        let bookKey = "progress_\\(appState.bookTitle)_\\(appState.bookAuthor)"
-        let progress = BookProgress(chapterIndex: appState.currentChapterIndex, scrollPercentage: appState.currentScrollPercentage)
+        let bookKey = "progress_\(appState.bookTitle)_\(appState.bookAuthor)"
+        let progress = BookProgress(
+            chapterIndex: appState.currentChapterIndex,
+            scrollPercentage: appState.currentScrollPercentage,
+            fontSize: appState.fontSize,
+            fontColor: appState.fontColor,
+            margin: appState.margin,
+            topBottomMargin: appState.topBottomMargin,
+            textJustify: appState.textJustify
+        )
         if let data = try? JSONEncoder().encode(progress) {
             UserDefaults.standard.set(data, forKey: bookKey)
         }
@@ -193,4 +217,9 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
 struct BookProgress: Codable {
     let chapterIndex: Int
     let scrollPercentage: Double
+    var fontSize: Double?
+    var fontColor: String?
+    var margin: Double?
+    var topBottomMargin: Double?
+    var textJustify: String?
 }

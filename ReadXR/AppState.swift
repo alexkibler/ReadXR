@@ -15,6 +15,7 @@ struct RecentBook: Codable, Identifiable, Hashable {
     let title: String
     let author: String
     let bookmarkData: Data
+    var isFinished: Bool?
 }
 
 /// A singleton that manages the global state of the ReadXR app.
@@ -59,6 +60,14 @@ final class AppState {
     /// List of recently loaded books
     var recentBooks: [RecentBook] = []
     
+    // MARK: - Reading Options
+    
+    var fontSize: Double = 1.3
+    var fontColor: String = "#E0E0E0"
+    var margin: Double = 0.05
+    var topBottomMargin: Double = 0.05
+    var textJustify: String = "left"
+    
     // MARK: - Navigation Intents
     
     /// Triggers a page forward navigation
@@ -80,6 +89,17 @@ final class AppState {
         print("Intent: Toggle Menu")
     }
     
+    // MARK: - Actions
+    
+    /// Closes the current book and returns to the library UI
+    func closeBook() {
+        isBookLoaded = false
+        bookTitle = "No Book Loaded"
+        bookAuthor = "Unknown Author"
+        currentChapterIndex = 0
+        currentChapterHTML = ""
+    }
+    
     // MARK: - Private Initializer
     
     private init() {
@@ -93,6 +113,19 @@ final class AppState {
         if let data = try? JSONEncoder().encode(recentBooks) {
             UserDefaults.standard.set(data, forKey: "recentBooks")
         }
+    }
+    
+    func toggleBookFinished(_ book: RecentBook) {
+        if let index = recentBooks.firstIndex(where: { $0.id == book.id }) {
+            let current = recentBooks[index].isFinished ?? false
+            recentBooks[index].isFinished = !current
+            saveRecents()
+        }
+    }
+    
+    func deleteBook(_ book: RecentBook) {
+        recentBooks.removeAll { $0.id == book.id }
+        saveRecents()
     }
 }
 
