@@ -1,0 +1,41 @@
+html {
+    height: 100%;
+}
+.readxr-highlight {
+    background-color: rgba(255, 235, 59, 0.4);
+    border-radius: 3px;
+    color: black !important;
+}
+.readxr-saved-highlight {
+    background-color: rgba(255, 210, 0, 0.22);
+    border-radius: 2px;
+}
+body {
+    margin: 0;
+    padding: 0;
+    padding-top: var(--user-tb-margin) !important;
+    padding-bottom: var(--user-tb-margin) !important;
+    padding-left: var(--user-margin-px) !important;
+    padding-right: var(--user-margin-px) !important;
+    height: 100%;
+    /* overflow-y hidden stops vertical scroll; horizontal overflow is intentional —
+       CSS columns extend the document width so the scrollView can page through them. */
+    overflow-y: hidden;
+    background-color: transparent !important;
+    color: var(--user-font-color) !important;
+    font-family: -apple-system, sans-serif;
+    font-size: var(--user-font-size) !important;
+    text-align: var(--user-justify) !important;
+    line-height: 1.8;
+    overflow-wrap: break-word;
+    word-wrap: break-word;
+    box-sizing: border-box;
+    column-gap: var(--user-gap-px) !important;
+}
+img, video, svg {
+    max-width: 100% !important;
+    height: auto !important;
+    display: block !important;
+    margin: 0 auto !important;
+}
+a { color: #6EA8FF; }

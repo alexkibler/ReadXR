@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UIKit
 import WebKit
 
 /// The view displayed on the external display (AR glasses).
@@ -18,13 +19,14 @@ struct ReaderView: View {
             if appState.isBookLoaded {
                 ZStack(alignment: .bottomTrailing) {
                     WebView(
-                        htmlContent: appState.currentChapterHTML, 
+                        htmlContent: appState.currentChapterHTML,
                         baseURL: appState.baseURL,
                         fontSize: appState.fontSize,
                         fontColor: appState.fontColor,
                         margin: appState.margin,
                         topBottomMargin: appState.topBottomMargin,
-                        justify: appState.textJustify
+                        justify: appState.textJustify,
+                        isExternalDisplayConnected: appState.isExternalDisplayConnected
                     )
                         .id("WebView") // don't reconstruct WebView on html change!
                         .padding(.vertical, geo.size.height * 0.05)
@@ -52,6 +54,27 @@ struct ReaderView: View {
     }
 }
 
+// MARK: - Custom WKWebView subclass for native text selection menu
+
+class ReaderWKWebView: WKWebView {
+    override func buildMenu(with builder: UIMenuBuilder) {
+        super.buildMenu(with: builder)
+        let highlightCommand = UICommand(
+            title: "Highlight",
+            image: UIImage(systemName: "highlighter"),
+            action: #selector(highlightNativeSelection)
+        )
+        let highlightMenu = UIMenu(title: "", options: .displayInline, children: [highlightCommand])
+        builder.insertSibling(highlightMenu, afterMenu: .standardEdit)
+    }
+
+    @objc func highlightNativeSelection(_ sender: Any?) {
+        NotificationCenter.default.post(name: Notification.Name("nativeHighlightRequested"), object: nil)
+    }
+}
+
+// MARK: - WebView
+
 struct WebView: UIViewRepresentable {
     let htmlContent: String
     let baseURL: URL?
@@ -60,15 +83,17 @@ struct WebView: UIViewRepresentable {
     let margin: Double
     let topBottomMargin: Double
     let justify: String
+    let isExternalDisplayConnected: Bool
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
 
-    class Coordinator: NSObject, WKNavigationDelegate {
+    class Coordinator: NSObject, WKNavigationDelegate, UIScrollViewDelegate {
         var parent: WebView
         var webView: WKWebView?
         var lastLoadedHTML: String = ""
+        var lastIsExternalDisplayConnected: Bool = true
         /// Tracks the intended scroll destination independently of the animated position,
         /// so rapid page turns always compute from the correct logical page rather than
         /// an in-flight (mid-animation) content offset.
@@ -89,6 +114,7 @@ struct WebView: UIViewRepresentable {
             NotificationCenter.default.addObserver(self, selector: #selector(handleScrollToHighlight(_:)), name: .scrollToHighlight, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(handleScrollToPercentage(_:)), name: .scrollToPercentage, object: nil)
             NotificationCenter.default.addObserver(self, selector: #selector(captureTopSentenceIdAndNavigate(_:)), name: .captureTopSentenceAndNavigate, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(handleNativeHighlightRequested), name: Notification.Name("nativeHighlightRequested"), object: nil)
         }
 
         deinit {
@@ -146,6 +172,27 @@ struct WebView: UIViewRepresentable {
             }
         }
 
+        @objc func handleNativeHighlightRequested() {
+            webView?.evaluateJavaScript("saveNativeSelection();") { [weak self] result, _ in
+                guard let jsonStr = result as? String,
+                      let data = jsonStr.data(using: .utf8),
+                      let parsed = try? JSONDecoder().decode(HighlightData.self, from: data),
+                      !parsed.text.isEmpty else { return }
+                Task { @MainActor in
+                    AppState.shared.saveCurrentHighlight(parsed.text, sentenceStartId: parsed.startId, sentenceEndId: parsed.endId)
+                    let appState = AppState.shared
+                    let locations = appState.activeBookHighlights
+                        .filter { $0.chapterIndex == appState.currentChapterIndex }
+                        .map { HighlightLocation(highlight: $0) }
+                    if let encoded = try? JSONEncoder().encode(locations),
+                       let jsStr = String(data: encoded, encoding: .utf8) {
+                        self?.webView?.evaluateJavaScript("applyPersistentHighlights(\(jsStr));") { _, _ in }
+                    }
+                    self?.webView?.evaluateJavaScript("window.getSelection().removeAllRanges();") { _, _ in }
+                }
+            }
+        }
+
         @objc func handleScrollToHighlight(_ notification: Notification) {
             if let sid = notification.userInfo?["sentenceId"] as? Int {
                 webView?.evaluateJavaScript("scrollToHighlightId(\(sid));") { _, _ in }
@@ -172,7 +219,7 @@ struct WebView: UIViewRepresentable {
             webView?.evaluateJavaScript("getTopSentenceId();") { result, _ in
                 Task { @MainActor in
                     let appState = AppState.shared
-                    
+
                     if appState.returnChapterIndex == nil {
                         appState.returnChapterIndex = appState.currentChapterIndex
                         appState.returnScrollPercentage = appState.currentScrollPercentage
@@ -180,11 +227,11 @@ struct WebView: UIViewRepresentable {
                             appState.returnSentenceId = sid
                         }
                     }
-                    
+
                     guard let chIdx = highlight.chapterIndex else { return }
                     let isSameChapter = chIdx == appState.currentChapterIndex
                     appState.currentChapterIndex = chIdx
-                    
+
                     if let highlightSid = highlight.sentenceStartId {
                         if isSameChapter {
                             NotificationCenter.default.post(name: .scrollToHighlight, object: nil, userInfo: ["sentenceId": highlightSid])
@@ -244,6 +291,22 @@ struct WebView: UIViewRepresentable {
             }
         }
 
+        // MARK: UIScrollViewDelegate — sync progress when user physically scrolls (iPhone mode)
+
+        func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+            let width = scrollView.bounds.width
+            let maxOffset = scrollView.contentSize.width - width
+            guard maxOffset > 0 else { return }
+
+            targetOffset = scrollView.contentOffset.x
+
+            let pct = scrollView.contentOffset.x / maxOffset
+            Task { @MainActor in
+                AppState.shared.currentScrollPercentage = pct
+                EpubManager.shared.saveProgress()
+            }
+        }
+
         @objc func pageForward() {
             guard let scrollView = webView?.scrollView else { return }
             let width = scrollView.bounds.width
@@ -288,17 +351,29 @@ struct WebView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> WKWebView {
-        let webView = WKWebView()
+        let webView = ReaderWKWebView()
         webView.isOpaque = false
         webView.backgroundColor = .black
         webView.scrollView.backgroundColor = .black
-        webView.scrollView.isScrollEnabled = false
+        webView.scrollView.isScrollEnabled = !isExternalDisplayConnected
+        webView.scrollView.isPagingEnabled = !isExternalDisplayConnected
         webView.navigationDelegate = context.coordinator
+        webView.scrollView.delegate = context.coordinator
         context.coordinator.webView = webView
+        context.coordinator.lastIsExternalDisplayConnected = isExternalDisplayConnected
         return webView
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {
+        // Toggle native scroll and user-select when display mode changes
+        if context.coordinator.lastIsExternalDisplayConnected != isExternalDisplayConnected {
+            context.coordinator.lastIsExternalDisplayConnected = isExternalDisplayConnected
+            uiView.scrollView.isScrollEnabled = !isExternalDisplayConnected
+            uiView.scrollView.isPagingEnabled = !isExternalDisplayConnected
+            let selectValue = isExternalDisplayConnected ? "none" : "text"
+            uiView.evaluateJavaScript("document.body.style.webkitUserSelect = '\(selectValue)'; document.body.style.userSelect = '\(selectValue)';") { _, _ in }
+        }
+
         if context.coordinator.lastLoadedHTML != htmlContent {
             uiView.loadHTMLString(buildHTML(htmlContent), baseURL: baseURL)
             context.coordinator.lastLoadedHTML = htmlContent
@@ -330,7 +405,15 @@ struct WebView: UIViewRepresentable {
     }
 
     private func buildHTML(_ content: String) -> String {
-        """
+        let userSelectValue = isExternalDisplayConnected ? "none" : "text"
+        
+        let cssPath = Bundle.main.path(forResource: "ReaderStyles", ofType: "css")
+        let jsPath = Bundle.main.path(forResource: "ReaderScripts", ofType: "js")
+        
+        let css = (try? String(contentsOfFile: cssPath ?? "")) ?? ""
+        let js = (try? String(contentsOfFile: jsPath ?? "")) ?? ""
+
+        return """
         <!DOCTYPE html>
         <html>
         <head>
@@ -339,260 +422,20 @@ struct WebView: UIViewRepresentable {
             :root {
                 --user-font-size: \(fontSize)em;
                 --user-font-color: \(fontColor);
-                --user-margin: \(Int(margin * 100))vw;
-                --user-tb-margin: \(Int(topBottomMargin * 100))vh;
-                --user-gap: \(Int(margin * 200))vw;
                 --user-justify: \(justify);
+                --raw-margin: \(margin);
+                --user-tb-margin: \(Int(topBottomMargin * 100))vh;
+                --user-margin-px: 0px;
+                --user-gap-px: 0px;
             }
-            html {
-                height: 100%;
-            }
-            .readxr-highlight {
-                background-color: rgba(255, 235, 59, 0.4);
-                border-radius: 3px;
-                color: black !important;
-            }
-            .readxr-saved-highlight {
-                background-color: rgba(255, 210, 0, 0.22);
-                border-radius: 2px;
-            }
+            \(css)
             body {
-                margin: 0;
-                padding: 0;
-                padding-top: var(--user-tb-margin) !important;
-                padding-bottom: var(--user-tb-margin) !important;
-                padding-left: var(--user-margin) !important;
-                padding-right: var(--user-margin) !important;
-                height: 100%;
-                /* overflow-y hidden stops vertical scroll; horizontal overflow is intentional —
-                   CSS columns extend the document width so the scrollView can page through them. */
-                overflow-y: hidden;
-                background-color: transparent !important;
-                color: var(--user-font-color) !important;
-                font-family: -apple-system, sans-serif;
-                font-size: var(--user-font-size) !important;
-                text-align: var(--user-justify) !important;
-                line-height: 1.8;
-                overflow-wrap: break-word;
-                word-wrap: break-word;
-                box-sizing: border-box;
-                column-gap: var(--user-gap) !important;
+                -webkit-user-select: \(userSelectValue);
+                user-select: \(userSelectValue);
             }
-            img, video, svg {
-                max-width: 100% !important;
-                height: auto !important;
-                display: block !important;
-                margin: 0 auto !important;
-            }
-            a { color: #6EA8FF; }
             </style>
             <script>
-            var sentencesWrapped = false;
-            var highlightStartIndex = 0;
-            var highlightEndIndex = 0;
-
-            function wrapSentences() {
-                if(sentencesWrapped) return;
-                var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
-                var nodes = [];
-                while(walker.nextNode()) {
-                    var pName = walker.currentNode.parentNode.nodeName;
-                    if(pName !== 'SCRIPT' && pName !== 'STYLE' && walker.currentNode.textContent.trim().length > 0) {
-                        nodes.push(walker.currentNode);
-                    }
-                }
-                var sentenceId = 0;
-                nodes.forEach(function(node) {
-                    var text = node.textContent;
-                    var match;
-                    var regex = /([^.!?]+[.!?]+(?:\\s+|$)|[^.!?]+$)/g;
-                    var p = node.parentNode;
-                    var frag = document.createDocumentFragment();
-                    var matchedAny = false;
-                    while ((match = regex.exec(text)) !== null) {
-                        matchedAny = true;
-                        var str = match[0];
-                        if (str.trim().length === 0) {
-                            frag.appendChild(document.createTextNode(str));
-                            continue;
-                        }
-                        var span = document.createElement('span');
-                        span.className = 'readxr-sentence';
-                        span.dataset.sid = sentenceId++;
-                        span.textContent = str;
-                        frag.appendChild(span);
-                    }
-                    if (matchedAny) {
-                        p.replaceChild(frag, node);
-                    }
-                });
-                sentencesWrapped = true;
-            }
-
-            function startHighlightMode() {
-                wrapSentences();
-                var spans = document.querySelectorAll('.readxr-sentence');
-                var w = window.innerWidth;
-                for(var i=0; i<spans.length; i++) {
-                    var rect = spans[i].getBoundingClientRect();
-                    if (rect.left >= 0 && rect.left < w) {
-                        highlightStartIndex = i;
-                        highlightEndIndex = i;
-                        updateHighlightUI();
-                        return;
-                    }
-                }
-            }
-
-            function updateHighlightUI() {
-                var els = document.querySelectorAll('.readxr-sentence.readxr-highlight');
-                for(var i=0; i<els.length; i++) els[i].classList.remove('readxr-highlight');
-                var start = Math.min(highlightStartIndex, highlightEndIndex);
-                var end = Math.max(highlightStartIndex, highlightEndIndex);
-                var spans = document.querySelectorAll('.readxr-sentence');
-                for(var i=start; i<=end; i++) {
-                    if(spans[i]) spans[i].classList.add('readxr-highlight');
-                }
-                ensureVisible(highlightStartIndex);
-                ensureVisible(highlightEndIndex);
-            }
-
-            function moveHighlight(amount) {
-                highlightStartIndex += amount;
-                highlightEndIndex += amount;
-                var spans = document.querySelectorAll('.readxr-sentence');
-                if (highlightStartIndex < 0) { highlightStartIndex = 0; highlightEndIndex = 0; }
-                if (highlightEndIndex >= spans.length) { 
-                    highlightStartIndex = spans.length - 1; 
-                    highlightEndIndex = spans.length - 1; 
-                }
-                updateHighlightUI();
-            }
-
-            function resizeHighlight(amount) {
-                if (amount > 0) {
-                    highlightEndIndex += amount;
-                } else {
-                    if (highlightEndIndex > highlightStartIndex) {
-                        highlightEndIndex += amount;
-                    } else if (highlightEndIndex < highlightStartIndex) {
-                        highlightEndIndex += Math.abs(amount);
-                    }
-                }
-                var spans = document.querySelectorAll('.readxr-sentence');
-                if (highlightEndIndex >= spans.length) highlightEndIndex = spans.length - 1;
-                updateHighlightUI();
-            }
-
-            function ensureVisible(index) {
-                var span = document.querySelectorAll('.readxr-sentence')[index];
-                if(span) {
-                    var rect = span.getBoundingClientRect();
-                    var w = window.innerWidth;
-                    if (rect.left < 0 || rect.left >= w) {
-                        var colWidth = w;
-                        var pagesToMove = Math.floor(rect.left / colWidth);
-                        window.scrollBy({left: pagesToMove * colWidth, behavior: 'instant'});
-                    }
-                }
-            }
-
-            function getHighlightData() {
-                var start = Math.min(highlightStartIndex, highlightEndIndex);
-                var end = Math.max(highlightStartIndex, highlightEndIndex);
-                var spans = document.querySelectorAll('.readxr-sentence');
-                var text = "";
-                for(var i=start; i<=end; i++) {
-                    if(spans[i]) text += spans[i].textContent + " ";
-                }
-                var startId = spans[start] ? parseInt(spans[start].dataset.sid) : -1;
-                var endId = spans[end] ? parseInt(spans[end].dataset.sid) : -1;
-                return JSON.stringify({text: text.trim(), startId: startId, endId: endId});
-            }
-
-            function getTopSentenceId() {
-                wrapSentences();
-                var spans = document.querySelectorAll('.readxr-sentence');
-                var w = window.innerWidth;
-                for(var i=0; i<spans.length; i++) {
-                    var rect = spans[i].getBoundingClientRect();
-                    // In a multi-column layout handled via UIScrollView,
-                    // the elements on the currently visible page will have rect.left >= 0 and rect.left < viewport width.
-                    if (rect.left >= 0 && rect.left < w && rect.width > 0) {
-                        return parseInt(spans[i].dataset.sid);
-                    }
-                }
-                return null;
-            }
-
-            function clearHighlightMode() {
-                var els = document.querySelectorAll('.readxr-sentence.readxr-highlight');
-                for(var i=0; i<els.length; i++) els[i].classList.remove('readxr-highlight');
-            }
-
-            function applyPersistentHighlights(locations) {
-                wrapSentences();
-                var spans = Array.from(document.querySelectorAll('.readxr-sentence'));
-                spans.forEach(function(s) { s.classList.remove('readxr-saved-highlight'); });
-                locations.forEach(function(loc) {
-                    if (loc.startId >= 0) {
-                        // ID-based match (new highlights)
-                        spans.forEach(function(span) {
-                            var sid = parseInt(span.dataset.sid);
-                            if (sid >= loc.startId && sid <= loc.endId) {
-                                span.classList.add('readxr-saved-highlight');
-                            }
-                        });
-                    } else if (loc.text) {
-                        // Text-based fallback (old highlights)
-                        var target = loc.text.trim();
-                        for (var i = 0; i < spans.length; i++) {
-                            for (var j = i; j < spans.length && j < i + 30; j++) {
-                                var combined = spans.slice(i, j+1).map(function(s) { return s.textContent; }).join(' ').trim();
-                                if (combined === target) {
-                                    for (var k = i; k <= j; k++) { spans[k].classList.add('readxr-saved-highlight'); }
-                                    i = j;
-                                    break;
-                                }
-                                if (combined.length > target.length + 30) break;
-                            }
-                        }
-                    }
-                });
-            }
-
-            function scrollToHighlightId(startSid) {
-                wrapSentences();
-                ensureVisible(startSid);
-            }
-
-            // applyLayout() is called on DOMContentLoaded, on viewport resize (fires when the
-            // WKWebView is moved from the iPhone window to the external display window), and
-            // again from Swift's webView(_:didFinish:) as a final guarantee.
-            function applyLayout() {
-                var w = window.innerWidth;
-                var h = window.innerHeight;
-                if (w > 0 && h > 0) {
-                    var style = window.getComputedStyle(document.body);
-                    var pl = parseFloat(style.paddingLeft) || 0;
-                    var pr = parseFloat(style.paddingRight) || 0;
-                    var contentWidth = w - pl - pr;
-                    document.body.style.columnWidth = (contentWidth > 0 ? contentWidth : w) + 'px';
-                    document.body.style.height = h + 'px';
-                }
-            }
-            function updateStyles(size, color, justify, margin, tbMargin) {
-                var root = document.documentElement;
-                root.style.setProperty('--user-font-size', size + 'em');
-                root.style.setProperty('--user-font-color', color);
-                root.style.setProperty('--user-justify', justify);
-                root.style.setProperty('--user-margin', Math.floor(margin * 100) + 'vw');
-                root.style.setProperty('--user-tb-margin', Math.floor(tbMargin * 100) + 'vh');
-                root.style.setProperty('--user-gap', Math.floor(margin * 200) + 'vw');
-                applyLayout();
-            }
-            document.addEventListener('DOMContentLoaded', applyLayout);
-            window.addEventListener('resize', applyLayout);
+            \(js)
             </script>
         </head>
         <body>\(content)</body>

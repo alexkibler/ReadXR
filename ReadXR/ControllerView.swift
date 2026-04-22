@@ -165,10 +165,8 @@ struct ControllerView: View {
             ReaderView()
                 .environment(AppState.shared)
 
-            Color.clear
-                .contentShape(Rectangle())
-                .gesture(navigationGesture)
-                .simultaneousGesture(longPressGesture)
+            // No gesture overlay in iPhone mode: the WebView's native UIScrollView handles
+            // paging and long-press text selection directly.
 
             // Float the nav bar at the bottom using VStack so it stays above the
             // home indicator without adding any inset to the WebView's coordinate space.
@@ -345,10 +343,27 @@ struct ControllerView: View {
 
                 Spacer()
 
-                Text("Trackpad Active")
-                    .foregroundColor(.white.opacity(0.3))
-                    .font(.title3)
-                    .italic()
+                VStack(spacing: 6) {
+                    if let title = appState.currentChapterTitle {
+                        Text("Ch \(appState.currentChapterIndex + 1) of \(appState.totalChapters)")
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.35))
+                        Text(title)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.white.opacity(0.6))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .padding(.horizontal, 16)
+                    } else {
+                        Text("Chapter \(appState.currentChapterIndex + 1) of \(appState.totalChapters)")
+                            .font(.subheadline)
+                            .foregroundColor(.white.opacity(0.45))
+                    }
+                    Text("\(Int(appState.currentScrollPercentage * 100))%")
+                        .font(.caption.monospacedDigit())
+                        .foregroundColor(.white.opacity(0.25))
+                }
 
                 Spacer()
             }

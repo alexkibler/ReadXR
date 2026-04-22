@@ -9,30 +9,6 @@ import SwiftUI
 import Observation
 import UniformTypeIdentifiers
 
-/// Represents a recently opened book
-struct RecentBook: Codable, Identifiable, Hashable {
-    var id: UUID = UUID()
-    let title: String
-    let author: String
-    let bookmarkData: Data
-    var isFinished: Bool?
-}
-
-/// Represents a highlighted section of text
-struct Highlight: Codable, Identifiable, Hashable {
-    var id: UUID = UUID()
-    let bookId: String
-    let text: String
-    let chapterName: String
-    let pageOrProgress: String
-    var chapterIndex: Int?
-    var scrollPercentage: Double?
-    /// data-sid of the first sentence span in the highlight
-    var sentenceStartId: Int?
-    /// data-sid of the last sentence span in the highlight
-    var sentenceEndId: Int?
-}
-
 /// A singleton that manages the global state of the ReadXR app.
 /// This includes the loaded ePub data, current reading progress, and navigation triggers.
 @Observable
@@ -56,6 +32,9 @@ final class AppState {
     
     /// Total chapters in the book
     var totalChapters: Int = 0
+
+    /// The display title of the current chapter (from NCX table of contents), if available
+    var currentChapterTitle: String? = nil
     
     /// The current scroll percentage (0.0 to 1.0) within the chapter
     var currentScrollPercentage: Double = 0.0
@@ -94,8 +73,8 @@ final class AppState {
     var pendingHighlightSentenceId: Int? = nil
     
     // MARK: - Audio Settings
-    var lockScreenControls: Bool = UserDefaults.standard.object(forKey: "lockScreenControls") as? Bool ?? true {
-        didSet { UserDefaults.standard.set(lockScreenControls, forKey: "lockScreenControls") }
+    var lockScreenControls: Bool = StorageService.shared.loadLockScreenControlsPreference() {
+        didSet { StorageService.shared.saveLockScreenControlsPreference(lockScreenControls) }
     }
 
     // MARK: - Reading Options (Internal)
@@ -176,9 +155,7 @@ final class AppState {
     }
     
     func saveHighlights() {
-        if let data = try? JSONEncoder().encode(highlights) {
-            UserDefaults.standard.set(data, forKey: "highlights")
-        }
+        StorageService.shared.saveHighlights(highlights)
     }
     
     // MARK: - Actions
@@ -189,26 +166,19 @@ final class AppState {
         bookTitle = "No Book Loaded"
         bookAuthor = "Unknown Author"
         currentChapterIndex = 0
+        currentChapterTitle = nil
         currentChapterHTML = ""
     }
     
     // MARK: - Private Initializer
     
     private init() {
-        if let data = UserDefaults.standard.data(forKey: "recentBooks"),
-           let recents = try? JSONDecoder().decode([RecentBook].self, from: data) {
-            self.recentBooks = recents
-        }
-        if let hData = UserDefaults.standard.data(forKey: "highlights"),
-           let hRecents = try? JSONDecoder().decode([Highlight].self, from: hData) {
-            self.highlights = hRecents
-        }
+        self.recentBooks = StorageService.shared.loadRecentBooks()
+        self.highlights = StorageService.shared.loadHighlights()
     }
     
     func saveRecents() {
-        if let data = try? JSONEncoder().encode(recentBooks) {
-            UserDefaults.standard.set(data, forKey: "recentBooks")
-        }
+        StorageService.shared.saveRecentBooks(recentBooks)
     }
     
     func toggleBookFinished(_ book: RecentBook) {

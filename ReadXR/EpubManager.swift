@@ -80,9 +80,7 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
             appState.saveRecents()
         }
         
-        let bookKey = "progress_\(appState.bookTitle)_\(appState.bookAuthor)"
-        if let data = UserDefaults.standard.data(forKey: bookKey),
-           let progress = try? JSONDecoder().decode(BookProgress.self, from: data) {
+        if let progress = StorageService.shared.loadProgress(title: appState.bookTitle, author: appState.bookAuthor) {
             appState.currentChapterIndex = min(progress.chapterIndex, appState.totalChapters - 1)
             appState.currentScrollPercentage = progress.scrollPercentage
             if let fs = progress.fontSize { appState.fontSizeInternal = fs }
@@ -130,9 +128,12 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
         
         // EPUBKit uses .path for the full relative path within the EPUB
         let chapterURL = document.contentDirectory.appendingPathComponent(manifestItem.path)
-        
+
         // Update baseURL to the folder containing this chapter (for local image/CSS resolution)
         appState.baseURL = chapterURL.deletingLastPathComponent()
+
+        // Resolve chapter title from the NCX table of contents
+        appState.currentChapterTitle = tocLabel(for: manifestItem.path, in: document.tableOfContents)
         
         if var htmlString = try? String(contentsOf: chapterURL, encoding: .utf8) {
             // Extract only the content INSIDE the body tags
@@ -191,7 +192,6 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
 
     /// Saves the current reading progress to UserDefaults.
     func saveProgress() {
-        let bookKey = "progress_\(appState.bookTitle)_\(appState.bookAuthor)"
         let progress = BookProgress(
             chapterIndex: appState.currentChapterIndex,
             scrollPercentage: appState.currentScrollPercentage,
@@ -206,11 +206,32 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
             topBottomMarginExternal: appState.topBottomMarginExternal,
             textJustifyExternal: appState.textJustifyExternal
         )
-        if let data = try? JSONEncoder().encode(progress) {
-            UserDefaults.standard.set(data, forKey: bookKey)
-        }
+        StorageService.shared.saveProgress(progress, title: appState.bookTitle, author: appState.bookAuthor)
     }
     
+    // MARK: - TOC helpers
+
+    /// Searches the NCX table of contents tree for a label matching the given manifest path.
+    /// Matches by comparing the TOC href (stripped of any fragment) against the manifest path's
+    /// last path component, to handle varying directory prefixes across EPUB packages.
+    private func tocLabel(for manifestPath: String, in toc: EPUBTableOfContents) -> String? {
+        let filename = (manifestPath as NSString).lastPathComponent
+        func search(_ node: EPUBTableOfContents) -> String? {
+            if let href = node.item {
+                let hrefPath = href.components(separatedBy: "#").first ?? href
+                let hrefFilename = (hrefPath as NSString).lastPathComponent
+                if hrefFilename == filename && !node.label.trimmingCharacters(in: .whitespaces).isEmpty {
+                    return node.label.trimmingCharacters(in: .whitespaces)
+                }
+            }
+            for child in node.subTable ?? [] {
+                if let found = search(child) { return found }
+            }
+            return nil
+        }
+        return search(toc)
+    }
+
     /// Loads a previously opened book.
     func loadRecentBook(_ book: RecentBook) {
         var isStale = false
@@ -223,19 +244,4 @@ final class EpubManager: NSObject, UIDocumentPickerDelegate {
         }
         handlePickedURL(url)
     }
-}
-
-struct BookProgress: Codable {
-    let chapterIndex: Int
-    let scrollPercentage: Double
-    var fontSize: Double?
-    var fontColor: String?
-    var margin: Double?
-    var topBottomMargin: Double?
-    var textJustify: String?
-    var fontSizeExternal: Double?
-    var fontColorExternal: String?
-    var marginExternal: Double?
-    var topBottomMarginExternal: Double?
-    var textJustifyExternal: String?
 }
